@@ -603,6 +603,21 @@ typedef int (*picoquic_autoqlog_fn)(picoquic_cnx_t * cnx);
  */
 typedef int (*picoquic_performance_log_fn)(picoquic_quic_t* quic, picoquic_cnx_t* cnx, int should_delete);
 
+/* Multicast channels 
+ */
+ typedef enum {
+    picoquic_mc_channel_type_ipv4 = 0xff3e811,
+    picoquic_mc_channel_type_ipv6 = 0xff3e812,
+} picoquic_mc_channel_type_enum;
+
+typedef struct st_picoquic_multicast_channel_t {
+    // TODO MC add multicast channel context parameters
+    picoquic_multicast_channel_id_t channel_id;
+    picoquic_mc_channel_type_enum type;
+
+} picoquic_multicast_channel_t;
+
+
 /* QUIC context, defining the tables of connections,
  * open sockets, etc.
  */
@@ -1539,6 +1554,10 @@ typedef struct st_picoquic_cnx_t {
     char* binlog_file_name;
     void (*memlog_call_back)(picoquic_cnx_t* cnx, picoquic_path_t* path, void* v_memlog, int op_code, uint64_t current_time);
     void *memlog_ctx;
+
+    /* Multicast channels */
+    picoquic_multicast_channel_t ** announced_mc_channels;
+    picoquic_multicast_channel_t ** joined_mc_channels;
 } picoquic_cnx_t;
 
 typedef struct st_picoquic_packet_data_t {

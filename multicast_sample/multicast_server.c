@@ -84,12 +84,18 @@ typedef struct st_multicast_server_stream_ctx_t
     unsigned int is_stream_finished : 1;
 } multicast_server_stream_ctx_t;
 
+typedef struct st_multicast_server_channel_ctx_t
+{
+    // TODO MC: Implement things
+} multicast_server_channel_ctx_t;
+
 typedef struct st_multicast_server_ctx_t
 {
     char const *default_dir;
     size_t default_dir_len;
     multicast_server_stream_ctx_t *first_stream;
     multicast_server_stream_ctx_t *last_stream;
+    multicast_server_channel_ctx_t *ipv4_channel;
 } multicast_server_ctx_t;
 
 multicast_server_stream_ctx_t *multicast_server_create_stream_context(multicast_server_ctx_t *server_ctx, uint64_t stream_id)

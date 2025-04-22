@@ -245,6 +245,17 @@ typedef struct st_picoquic_connection_id_t {
     uint8_t id_len;
 } picoquic_connection_id_t;
 
+/* 
+ * Definition of the Multicast Channel ID
+ */
+#define PICOQUIC_CHANNEL_ID_MIN_SIZE 1
+#define PICOQUIC_CHANNEL_ID_MAX_SIZE 20
+
+typedef struct st_picoquic_multicast_channel_id_t {
+    uint8_t id[PICOQUIC_CHANNEL_ID_MAX_SIZE];
+    uint8_t id_len;
+} picoquic_multicast_channel_id_t;
+
 
 /* forward definition to avoid full dependency on picotls.h */
 typedef struct st_ptls_iovec_t ptls_iovec_t; 
@@ -257,6 +268,7 @@ int picoquic_is_handshake_error(uint64_t error_code);
 typedef struct st_picoquic_quic_t picoquic_quic_t;
 typedef struct st_picoquic_cnx_t picoquic_cnx_t;
 typedef struct st_picoquic_path_t picoquic_path_t;
+typedef struct st_picoquic_multicast_channel_t picoquic_multicast_channel_t;
 
 typedef enum {
     picoquic_callback_stream_data = 0, /* Data received from peer on stream N */
