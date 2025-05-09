@@ -452,7 +452,7 @@ int picoquic_multicast_server(int server_port, const char *server_cert, const ch
     /* Create the QUIC context for the server */
     current_time = picoquic_current_time();
     /* Create QUIC context */
-    quic = picoquic_create(8, server_cert, server_key, NULL, PICOQUIC_MULTICAST_ALPN,
+    quic = picoquic_create(PICOQUIC_MULTICAST_MAX_CLIENTS, server_cert, server_key, NULL, PICOQUIC_MULTICAST_ALPN,
                            multicast_server_callback, &default_context, NULL, NULL, NULL, current_time, NULL, NULL, NULL, 0);
 
     if (quic == NULL)
@@ -474,10 +474,12 @@ int picoquic_multicast_server(int server_port, const char *server_cert, const ch
 
         picoquic_set_key_log_file_from_env(quic);
 
+        picoquic_create_multicast_channel(quic, PICOQUIC_MULTICAST_MAX_CLIENTS, PICOQUIC_MULTICAST_GROUP_IP, PICOQUIC_MULTICAST_GROUP_PORT, NULL, NULL);
+
         // Always accept enable multicast
         picoquic_set_default_multicast_option(quic, 1);
         printf("Accept enable multicast: %s.\n", (quic->default_multicast_option) ? "Yes" : "No");
-    }
+    } 
 
     /* Wait for packets using the wait loop provided in the library.
      * On Linux, the default is to use UDP GSO when the system version is

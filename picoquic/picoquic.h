@@ -256,6 +256,10 @@ typedef struct st_picoquic_multicast_channel_id_t {
     uint8_t id_len;
 } picoquic_multicast_channel_id_t;
 
+typedef struct st_picoquic_multicast_header_secret_t {
+    uint8_t secret[16];
+    uint8_t secret_len;
+} picoquic_multicast_header_secret_t;
 
 /* forward definition to avoid full dependency on picotls.h */
 typedef struct st_ptls_iovec_t ptls_iovec_t; 
@@ -695,6 +699,8 @@ void picoquic_set_default_multicast_option(picoquic_quic_t* quic, int multicast_
 /* Set the multicast client params for the context */
 int picoquic_set_default_multicast_client_params(picoquic_quic_t* quic, picoquic_tp_multicast_client_params_t* params);
 
+/* Create a new multicast channel within the given QUIC context */
+int picoquic_create_multicast_channel(picoquic_quic_t* quic, int max_clients, uint8_t* group_ipv4[4], uint16_t port_ipv4, uint8_t* group_ipv6[16], uint16_t port_ipv6);
 /* Set the Address Discovery mode for the context */
 void picoquic_set_default_address_discovery_mode(picoquic_quic_t* quic, int mode);
 

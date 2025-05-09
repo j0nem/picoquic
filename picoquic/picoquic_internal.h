@@ -611,10 +611,16 @@ typedef int (*picoquic_performance_log_fn)(picoquic_quic_t* quic, picoquic_cnx_t
 } picoquic_mc_channel_type_enum;
 
 typedef struct st_picoquic_multicast_channel_t {
-    // TODO MC add multicast channel context parameters
     picoquic_multicast_channel_id_t channel_id;
     picoquic_mc_channel_type_enum type;
-
+    uint8_t group_ip_addr[16];
+    uint16_t port;
+    uint16_t header_protection_algorithm;
+    picoquic_multicast_header_secret_t header_secret;
+    uint16_t aead_algorithm;
+    uint16_t hash_algorithm;
+    uint64_t max_rate;
+    uint64_t max_ack_delay;
 } picoquic_multicast_channel_t;
 
 
@@ -755,6 +761,9 @@ typedef struct st_picoquic_quic_t {
     struct st_picoquic_unified_logging_t* qlog_fns;
     picoquic_performance_log_fn perflog_fn;
     void* v_perflog_ctx;
+
+    picoquic_multicast_channel_t ** mc_channels;
+    int nb_mc_channels;
 
 #ifdef BBRExperiment
     bbr_exp bbr_exp_flags;
@@ -1556,8 +1565,8 @@ typedef struct st_picoquic_cnx_t {
     void *memlog_ctx;
 
     /* Multicast channels */
-    picoquic_multicast_channel_t ** announced_mc_channels;
-    picoquic_multicast_channel_t ** joined_mc_channels;
+    picoquic_multicast_channel_t ** mc_announced_channels;
+    picoquic_multicast_channel_t ** mc_joined_channels;
 } picoquic_cnx_t;
 
 typedef struct st_picoquic_packet_data_t {
