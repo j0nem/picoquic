@@ -479,7 +479,7 @@ int picoquic_multicast_server(int server_port, const char *server_cert, const ch
         // Always accept enable multicast
         picoquic_set_default_multicast_option(quic, 1);
         printf("Accept enable multicast: %s.\n", (quic->default_multicast_option) ? "Yes" : "No");
-    } 
+    }
 
     /* Wait for packets using the wait loop provided in the library.
      * On Linux, the default is to use UDP GSO when the system version is

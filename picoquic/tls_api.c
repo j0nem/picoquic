@@ -1969,7 +1969,7 @@ int picoquic_tlscontext_create(picoquic_quic_t* quic, picoquic_cnx_t* cnx, uint6
 /*
  * Creation of a TLS context for multicast
  */
-// TODO MC: Is this even needed?
+// CHECK MC: Is this even needed?
 int picoquic_tlscontext_create_mc(picoquic_quic_t* quic, picoquic_multicast_channel_t* channel, unsigned int client_mode)
 {
     int ret = 0;
