@@ -921,7 +921,16 @@ int picoquic_create_multicast_channel(picoquic_quic_t* quic, int max_clients, ui
     new_channel->max_rate = 20;
     new_channel->max_ack_delay = PICOQUIC_ACK_DELAY_MAX;
 
-    // TODO MC: Set header secret and header secret length
+    if (new_channel->mc_tls_ctx == NULL) {
+        /* Only initialize TLS after all parameters have been set */
+        if (picoquic_tlscontext_create_mc(quic, new_channel, 0) != 0) {
+            // TODO MC: Delete channel
+            // picoquic_delete_mc_channel(new_channel);
+            // new_channel = NULL;
+        }
+    }
+
+    picoquic_compute_multicast_secrets(quic, new_channel);
 
     quic->mc_channels[quic->nb_mc_channels] = new_channel;
     quic->nb_mc_channels++;
@@ -930,7 +939,6 @@ int picoquic_create_multicast_channel(picoquic_quic_t* quic, int max_clients, ui
 static void picoquic_create_random_mc_channel_id(picoquic_quic_t* quic, picoquic_multicast_channel_id_t * channel_id, uint8_t id_length)
 {
     if (id_length > 0) {
-        // TODO MC: Generation with multicast TLS context instead of root TLS context
         picoquic_crypto_random(quic, channel_id->id, id_length);
     }
     if (id_length < sizeof(channel_id->id)) {
