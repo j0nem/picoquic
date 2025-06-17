@@ -901,7 +901,9 @@ static void picoquic_create_random_mc_channel_id(picoquic_quic_t* quic, picoquic
     channel_id->id_len = id_length;
 }
 
-int picoquic_create_multicast_channel(picoquic_quic_t* quic, int max_clients, struct sockaddr_storage* group_ipv4, struct sockaddr_storage* group_ipv6) {
+int picoquic_create_multicast_channel(picoquic_quic_t* quic, picoquic_multicast_channel_t** mc_channel, int max_clients, 
+    struct sockaddr_storage* group_ipv4, struct sockaddr_storage* group_ipv6) 
+{
     if (quic == NULL || max_clients <= 0 || (group_ipv4 == NULL && group_ipv6 == NULL)) {
         fprintf(stderr, "could not create multicast channel: invalid parameters\n");
         return -1;
@@ -962,7 +964,20 @@ int picoquic_create_multicast_channel(picoquic_quic_t* quic, int max_clients, st
     quic->mc_channels[quic->nb_mc_channels] = new_channel;
     quic->nb_mc_channels++;
 
+    *mc_channel = new_channel;
+
     return 0;
+}
+
+// Send MC_ANNOUNCE, MC_KEY and MC_JOIN frames to client
+// Currently only one multicast channel is supported by this method
+void picoquic_initiate_mc_announce_and_join(picoquic_cnx_t* cnx, picoquic_multicast_channel_t* channel) 
+{
+    // TODO MC: prepare MC_ANNOUNCE
+    
+
+    // TODO MC: prepare MC_KEY
+    // TODO MC: prepare MC_JOIN
 }
 
 void picoquic_set_default_address_discovery_mode(picoquic_quic_t* quic, int mode)

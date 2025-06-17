@@ -612,7 +612,6 @@ typedef int (*picoquic_performance_log_fn)(picoquic_quic_t* quic, picoquic_cnx_t
 
 typedef struct st_picoquic_multicast_channel_t {
     picoquic_multicast_channel_id_t channel_id;
-    void* mc_tls_ctx; // CHECK MC: Maybe not even needed?
     picoquic_mc_channel_type_enum type;
     struct sockaddr_storage group_ip;
     uint16_t header_protection_algorithm;
@@ -622,8 +621,36 @@ typedef struct st_picoquic_multicast_channel_t {
     uint16_t hash_algorithm;
     uint64_t max_rate;
     uint64_t max_ack_delay;
-    picoquic_cnx_t ** joined_clients;
+    int is_retired;
+    picoquic_cnx_t ** joined_cnx;
 } picoquic_multicast_channel_t;
+
+typedef enum {
+    // After sending (client) or receiving (server) MC_STATE(Retired)
+    picoquic_mc_state_retired = -3,
+
+    // After receiving (client) or sending (server) MC_RETIRE
+    picoquic_mc_state_retire_pending = -2,
+
+    // After receiving (client) or sending (server) MC_ANNOUNCE and MC_KEY
+    // OR after sending (client) or receiving (server) MC_STATE(Left)
+    picoquic_mc_state_unjoined = -1,
+
+    // After sending/receiving MC_LEAVE
+    picoquic_mc_state_leave_pending = 0,
+
+    // Ater receiving (client) or sending (server) MC_JOIN frame
+    picoquic_mc_state_join_pending = 1, 
+
+    // After sending (client) or receiving (server) MC_STATE(Joined) 
+    picoquic_mc_state_join_confirmed = 2,
+} picoquic_mc_state_enum;
+
+typedef struct st_picoquic_mc_channel_in_cnx_t {
+    picoquic_multicast_channel_t* channel;
+    picoquic_mc_state_enum state;
+    picoquic_mc_state_reason_enum state_reason;
+} picoquic_mc_channel_in_cnx_t;
 
 
 /* QUIC context, defining the tables of connections,
@@ -1568,8 +1595,7 @@ typedef struct st_picoquic_cnx_t {
     void *memlog_ctx;
 
     /* Multicast channels */
-    picoquic_multicast_channel_t ** mc_announced_channels;
-    picoquic_multicast_channel_t ** mc_joined_channels;
+    picoquic_mc_channel_in_cnx_t ** mc_channels;
 } picoquic_cnx_t;
 
 typedef struct st_picoquic_packet_data_t {
