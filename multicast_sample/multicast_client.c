@@ -285,12 +285,14 @@ int multicast_client_create_additional_path(picoquic_cnx_t *cnx, multicast_clien
         }
         else
         {
-            fprintf(stdout, "crpth: Probe new path failed with exit code %d\n", ret);
+            // CLEAN MC: Remove debug logs
+            // fprintf(stdout, "crpth: Probe new path failed with exit code %d\n", ret);
         }
     }
     else
     {
-        fprintf(stdout, "crpth: New path added, total paths available: %d\n", cb_ctx->cnx->nb_paths);
+        // CLEAN MC: Remove debug logs
+        // fprintf(stdout, "crpth: New path added, total paths available: %d\n", cb_ctx->cnx->nb_paths);
     }
 
     if (!need_to_wait)
@@ -324,8 +326,9 @@ int multicast_client_callback(picoquic_cnx_t *cnx,
         case picoquic_callback_path_available:
             client_ctx->second_path_unique_id = stream_id; /* stream id is used as unique path id here */
 
-            fprintf(stdout, "app: NEW PATH AVAILABLE, total number of paths: %i", cnx->nb_paths);
-            fprintf(stdout, ", unique path id: %i\n", client_ctx->second_path_unique_id);
+            // CLEAN MC: Remove debug logs
+            // fprintf(stdout, "app: NEW PATH AVAILABLE, total number of paths: %i", cnx->nb_paths);
+            // fprintf(stdout, ", unique path id: %i\n", client_ctx->second_path_unique_id);
 
             /* Create a stream context for all the files that should be downloaded */
             for (int i = 0; ret == 0 && i < client_ctx->nb_files; i++)
@@ -590,8 +593,7 @@ static int multicast_client_loop_cb(picoquic_quic_t *quic, picoquic_packet_loop_
             }
             else
             {
-                // CHECK MC: The code below is adapted from picoquicdemo, currently not executed.
-                // It seems that the state is never be reached
+                // CLEAN MC: Remove the following code (opening separate path) was only for experimental purposes
                 if (picoquic_get_cnx_state(cb_ctx->cnx) == picoquic_state_client_almost_ready && cb_ctx->notified_ready == 0)
                 {
                     // CHECK MC: Check if handshake check below is needed

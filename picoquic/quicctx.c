@@ -948,14 +948,14 @@ int picoquic_create_multicast_channel(picoquic_quic_t* quic, int max_clients, st
     new_channel->max_rate = 20;
     new_channel->max_ack_delay = PICOQUIC_ACK_DELAY_MAX;
 
-    if (new_channel->mc_tls_ctx == NULL) {
-        /* Only initialize TLS after all parameters have been set */
-        if (picoquic_tlscontext_create_mc(quic, new_channel, 0) != 0) {
-            // TODO MC: Delete channel
-            // picoquic_delete_mc_channel(new_channel);
-            // new_channel = NULL;
-        }
-    }
+    // if (new_channel->mc_tls_ctx == NULL) {
+    //     /* Only initialize TLS after all parameters have been set */
+    //     if (picoquic_tlscontext_create_mc(quic, new_channel, 0) != 0) {
+    //         // TODO MC: Delete channel
+    //         // picoquic_delete_mc_channel(new_channel);
+    //         // new_channel = NULL;
+    //     }
+    // }
 
     picoquic_compute_multicast_secrets(quic, new_channel);
 
@@ -2649,7 +2649,8 @@ int picoquic_set_stream_path_affinity(picoquic_cnx_t* cnx, uint64_t stream_id, u
         int path_id = picoquic_get_path_id_from_unique(cnx, unique_path_id);
         if (path_id >= 0) {
             stream->affinity_path = cnx->path[path_id];
-            fprintf(stdout, "Affinity path set to Path ID %i for Stream ID %li\n", path_id, stream_id);
+            // CLEAN MC: Remove debug logs
+            // fprintf(stdout, "Affinity path set to Path ID %i for Stream ID %li\n", path_id, stream_id);
         }
         else {
             ret = -1;
