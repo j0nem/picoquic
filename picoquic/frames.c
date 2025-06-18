@@ -6159,6 +6159,38 @@ int picoquic_process_ack_of_observed_address_frame(picoquic_cnx_t* cnx, picoquic
     return ret;
 }
 
+uint8_t* picoquic_format_mc_announce_frame(uint8_t* bytes, const uint8_t* bytes_max, picoquic_multicast_channel_t* channel, int * more_data)
+{
+    uint64_t ftype = 0;
+
+    if (channel->group_ip.ss_family == AF_INET6) {
+        ftype = picoquic_frame_type_mc_announce_v6;
+    }
+    else {
+        ftype = picoquic_frame_type_mc_announce_v4;
+    }
+    
+    // TODO MC Implement
+
+    // size_t l_addr = ((ftype & 1) == 0) ? 4 : 16;
+    // uint8_t* bytes0 = bytes;
+
+    // if ((bytes = picoquic_frames_varint_encode(bytes, bytes_max, ftype)) != NULL &&
+    //     (bytes = picoquic_frames_varint_encode(bytes, bytes_max, sequence_number)) != NULL &&
+    //     bytes + l_addr < bytes_max) {
+    //     memcpy(bytes, addr, l_addr);
+    //     bytes = picoquic_frames_uint16_encode(bytes + l_addr, bytes_max, port);
+    // }
+    // else {
+    //     bytes = NULL;
+    // }
+    // if (bytes == NULL) {
+    //     *more_data = 1;
+    //     bytes = bytes0;
+    // }
+    return bytes;
+}
+
 
 /* BDP frames as defined in https://tools.ietf.org/html/draft-kuhn-quic-0rtt-bdp-09
 */

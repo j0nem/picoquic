@@ -940,7 +940,6 @@ int picoquic_create_multicast_channel(picoquic_quic_t* quic, picoquic_multicast_
     picoquic_create_random_mc_channel_id(quic, &new_channel->channel_id, quic->local_cnxid_length);
 
     // Only supports ipv4 channels for now
-    new_channel->type = picoquic_mc_channel_type_ipv4;
     new_channel->group_ip = *group_ipv4;
 
     // TODO MC: Make configurable
@@ -969,15 +968,40 @@ int picoquic_create_multicast_channel(picoquic_quic_t* quic, picoquic_multicast_
     return 0;
 }
 
-// Send MC_ANNOUNCE, MC_KEY and MC_JOIN frames to client
+// Schedule MC_ANNOUNCE, MC_KEY and MC_JOIN frames for sending to client implicitly by adding it to cnx->mc_channels
 // Currently only one multicast channel is supported by this method
-void picoquic_initiate_mc_announce_and_join(picoquic_cnx_t* cnx, picoquic_multicast_channel_t* channel) 
+int picoquic_schedule_mc_announce_and_join(picoquic_cnx_t* cnx, picoquic_multicast_channel_t* channel) 
 {
-    // TODO MC: prepare MC_ANNOUNCE
-    
+    picoquic_mc_channel_in_cnx_t* new_channel_in_cnx = malloc(sizeof(picoquic_mc_channel_in_cnx_t));
+    if (new_channel_in_cnx == NULL) {
+        fprintf(stderr, "could not create picoquic_mc_channel_in_cnx_t: malloc failed\n");
+        return -1;
+    }
 
-    // TODO MC: prepare MC_KEY
-    // TODO MC: prepare MC_JOIN
+    // alloc space for one new pointer in cnx->mc_channels
+    picoquic_mc_channel_in_cnx_t** new_channel_list = (picoquic_mc_channel_in_cnx_t **)malloc((cnx->nb_mc_channels + 1) * sizeof(picoquic_mc_channel_in_cnx_t *));
+
+    if (new_channel_list != NULL)
+    {
+        if (cnx->mc_channels != NULL)
+        {
+            memset(new_channel_list, 0, sizeof(picoquic_mc_channel_in_cnx_t*));
+            if (cnx->nb_mc_channels > 0)
+            {
+                memcpy(new_channel_list, cnx->mc_channels, cnx->nb_mc_channels * sizeof(picoquic_mc_channel_in_cnx_t *));
+            }
+            free(cnx->mc_channels);
+        }
+        cnx->mc_channels = new_channel_list;
+    }
+
+    memset(new_channel_in_cnx, 0, sizeof(picoquic_mc_channel_in_cnx_t));
+    new_channel_in_cnx->channel = channel;
+
+    cnx->mc_channels[cnx->nb_mc_channels] = new_channel_in_cnx;
+    cnx->nb_mc_channels++;
+
+    return 0;
 }
 
 void picoquic_set_default_address_discovery_mode(picoquic_quic_t* quic, int mode)
