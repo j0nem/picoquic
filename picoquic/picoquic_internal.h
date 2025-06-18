@@ -164,7 +164,9 @@ typedef enum {
     picoquic_frame_type_paths_blocked = 0x15228c0d,
     picoquic_frame_type_path_cid_blocked = 0x15228c0e,
     picoquic_frame_type_observed_address_v4 = 0x9f81a6,
-    picoquic_frame_type_observed_address_v6 = 0x9f81a7
+    picoquic_frame_type_observed_address_v6 = 0x9f81a7,
+    picoquic_frame_type_mc_announce_v4 = 0xff3e811,
+    picoquic_frame_type_mc_announce_v6 = 0xff3e812
 } picoquic_frame_type_enum_t;
 
 /* PMTU discovery requirement status */
@@ -605,14 +607,9 @@ typedef int (*picoquic_performance_log_fn)(picoquic_quic_t* quic, picoquic_cnx_t
 
 /* Multicast channels 
  */
- typedef enum {
-    picoquic_mc_channel_type_ipv4 = 0xff3e811,
-    picoquic_mc_channel_type_ipv6 = 0xff3e812,
-} picoquic_mc_channel_type_enum;
 
 typedef struct st_picoquic_multicast_channel_t {
     picoquic_multicast_channel_id_t channel_id;
-    picoquic_mc_channel_type_enum type;
     struct sockaddr_storage group_ip;
     uint16_t header_protection_algorithm;
     uint16_t aead_algorithm;
@@ -625,31 +622,49 @@ typedef struct st_picoquic_multicast_channel_t {
     picoquic_cnx_t ** joined_cnx;
 } picoquic_multicast_channel_t;
 
+// State of a multicast channel in a cnx (with buffers for extensions):
+//   00..09 -> Pending join
+//   10     -> Join complete
+//   11..19 -> Pending leave
+//   20     -> Leave complete
+//   21..29 -> Pending retire
+//   30     -> Retire complete
 typedef enum {
-    // After sending (client) or receiving (server) MC_STATE(Retired)
-    picoquic_mc_state_retired = -3,
+    // The channel was not yet announced and is scheduled to be announced on this connection
+    picoquic_mc_state_announce_scheduled = 0,
 
-    // After receiving (client) or sending (server) MC_RETIRE
-    picoquic_mc_state_retire_pending = -2,
-
-    // After receiving (client) or sending (server) MC_ANNOUNCE and MC_KEY
-    // OR after sending (client) or receiving (server) MC_STATE(Left)
-    picoquic_mc_state_unjoined = -1,
-
-    // After sending/receiving MC_LEAVE
-    picoquic_mc_state_leave_pending = 0,
+    // After receiving (client) or sending (server) MC_ANNOUNCE
+    picoquic_mc_state_announced = 2,
 
     // Ater receiving (client) or sending (server) MC_JOIN frame
-    picoquic_mc_state_join_pending = 1, 
+    picoquic_mc_state_join_pending = 5, 
 
     // After sending (client) or receiving (server) MC_STATE(Joined) 
-    picoquic_mc_state_join_confirmed = 2,
+    picoquic_mc_state_join_attempted = 8,
+
+    // After sending (client) or receiving (server) MC_ACK 
+    // -> acknowledging first data on the multicast channel
+    picoquic_mc_state_join_confirmed = 10,
+
+    // After sending/receiving MC_LEAVE
+    picoquic_mc_state_leave_pending = 15,
+
+    // After sending (client) or receiving (server) MC_STATE(Left)
+    // OR MC_STATE(Declined Join)
+    picoquic_mc_state_left = 20,
+
+    // After receiving (client) or sending (server) MC_RETIRE
+    picoquic_mc_state_retire_pending = 25,
+
+    // After sending (client) or receiving (server) MC_STATE(Retired)
+    picoquic_mc_state_retired = 30,
 } picoquic_mc_state_enum;
 
 typedef struct st_picoquic_mc_channel_in_cnx_t {
     picoquic_multicast_channel_t* channel;
     picoquic_mc_state_enum state;
     picoquic_mc_state_reason_enum state_reason;
+    unsigned int key_available;
 } picoquic_mc_channel_in_cnx_t;
 
 
@@ -1596,6 +1611,7 @@ typedef struct st_picoquic_cnx_t {
 
     /* Multicast channels */
     picoquic_mc_channel_in_cnx_t ** mc_channels;
+    int nb_mc_channels;
 } picoquic_cnx_t;
 
 typedef struct st_picoquic_packet_data_t {
