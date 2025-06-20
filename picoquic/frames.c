@@ -6159,7 +6159,7 @@ int picoquic_process_ack_of_observed_address_frame(picoquic_cnx_t* cnx, picoquic
     return ret;
 }
 
-uint8_t* picoquic_format_mc_announce_frame(uint8_t* bytes, const uint8_t* bytes_max, picoquic_multicast_channel_t* channel, int * more_data)
+uint8_t* picoquic_format_mc_announce_frame(uint8_t* bytes, const uint8_t* bytes_max, picoquic_multicast_channel_t* channel, picoquic_path_t* path_x, int * more_data)
 {
     uint64_t ftype = 0;
 
@@ -6169,25 +6169,85 @@ uint8_t* picoquic_format_mc_announce_frame(uint8_t* bytes, const uint8_t* bytes_
     else {
         ftype = picoquic_frame_type_mc_announce_v4;
     }
-    
-    // TODO MC Implement
 
-    // size_t l_addr = ((ftype & 1) == 0) ? 4 : 16;
-    // uint8_t* bytes0 = bytes;
+    uint8_t* bytes0 = bytes;
 
-    // if ((bytes = picoquic_frames_varint_encode(bytes, bytes_max, ftype)) != NULL &&
-    //     (bytes = picoquic_frames_varint_encode(bytes, bytes_max, sequence_number)) != NULL &&
-    //     bytes + l_addr < bytes_max) {
-    //     memcpy(bytes, addr, l_addr);
-    //     bytes = picoquic_frames_uint16_encode(bytes + l_addr, bytes_max, port);
-    // }
-    // else {
-    //     bytes = NULL;
-    // }
-    // if (bytes == NULL) {
-    //     *more_data = 1;
-    //     bytes = bytes0;
-    // }
+    // Frame type
+    // Channel ID Length
+    if ((bytes = picoquic_frames_varint_encode(bytes, bytes_max, ftype)) == NULL
+        || (bytes = picoquic_frames_uint8_encode(bytes, bytes_max, channel->channel_id.id_len)) == NULL) {
+        *more_data = 1;
+        return bytes0;
+    } 
+
+    // Channel ID
+    uint8_t bytes_copied = picoquic_format_multicast_channel_id(bytes, bytes_max - bytes, channel->channel_id);
+    if (bytes_copied == 0) {
+        *more_data = 1;
+        return bytes0;
+    } else {
+        bytes++;
+    }
+
+    // Source IP
+    struct sockaddr_storage* src_addr = &path_x->local_addr;
+    uint8_t* src_addr_text;
+    uint8_t src_addr_text_len;
+    picoquic_get_ip_addr((struct sockaddr*) src_addr, &src_addr_text, &src_addr_text_len);
+
+    for (int i = 0; i < src_addr_text_len; i++) {
+        if ((bytes = picoquic_frames_uint8_encode(bytes, bytes_max, src_addr_text[i])) == NULL) {
+            *more_data = 1;
+            return bytes0;
+        }
+    }
+
+    // Group IP
+    uint8_t* group_addr_text;
+    uint8_t group_addr_text_len;
+    picoquic_get_ip_addr((struct sockaddr*) &channel->group_ip, &group_addr_text, &group_addr_text_len);
+
+    for (int i = 0; i < group_addr_text_len; i++) {
+        if ((bytes = picoquic_frames_uint8_encode(bytes, bytes_max, group_addr_text[i])) == NULL) {
+            *more_data = 1;
+            return bytes0;
+        }
+    }
+
+    uint16_t port = picoquic_get_addr_port((struct sockaddr*) &channel->group_ip);
+
+    // UDP Port
+    // Header Protection Algorithm
+    // Header Secret Length
+    if ((bytes = picoquic_frames_uint16_encode(bytes, bytes_max, port)) == NULL
+    || (bytes = picoquic_frames_uint16_encode(bytes, bytes_max, channel->header_protection_algorithm)) == NULL
+    || (bytes = picoquic_frames_varint_encode(bytes, bytes_max, channel->header_secret.secret_len)) == NULL) {
+        *more_data = 1;
+        return bytes0;
+    }
+
+    // Header Secret
+    if (bytes + channel->header_secret.secret_len < bytes_max) {
+        memcpy(bytes, channel->header_secret.secret, channel->header_secret.secret_len);
+        bytes += channel->header_secret.secret_len;
+    } else {
+        *more_data = 1;
+        return bytes0;
+    }
+
+    // AEAD Algorithm
+    // Hash Algorithm
+    // Max Rate
+    // Max ACK delay
+    if ((bytes = picoquic_frames_uint16_encode(bytes, bytes_max, channel->aead_algorithm)) == NULL
+        || (bytes = picoquic_frames_uint16_encode(bytes, bytes_max, channel->hash_algorithm)) == NULL
+        || (bytes = picoquic_frames_varint_encode(bytes, bytes_max, channel->max_rate)) == NULL
+        || (bytes = picoquic_frames_varint_encode(bytes, bytes_max, (channel->max_ack_delay / (uint64_t) 1000))) == NULL
+    ) {
+        *more_data = 1;
+        return bytes0;
+    }
+
     return bytes;
 }
 

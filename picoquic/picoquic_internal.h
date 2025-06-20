@@ -658,6 +658,10 @@ typedef enum {
 
     // After sending (client) or receiving (server) MC_STATE(Retired)
     picoquic_mc_state_retired = 30,
+
+    // When an unrecoverable error occured
+    // (this only refers to the channel usage in that connection, the channel itself may still be intact!)
+    picoqic_mc_state_error = 99
 } picoquic_mc_state_enum;
 
 typedef struct st_picoquic_mc_channel_in_cnx_t {
@@ -2116,6 +2120,9 @@ uint8_t* picoquic_prepare_observed_address_frame(uint8_t* bytes, const uint8_t* 
     picoquic_path_t* path_x, uint64_t current_time, uint64_t* next_wake_time,
     int* more_data, int* is_pure_ack);
 void picoquic_update_peer_addr(picoquic_path_t* path_x, const struct sockaddr* peer_addr);
+
+uint8_t* picoquic_format_mc_announce_frame(uint8_t* bytes, const uint8_t* bytes_max, 
+    picoquic_multicast_channel_t* channel, picoquic_path_t* path_x, int * more_data);
 
 int picoquic_skip_frame(const uint8_t* bytes, size_t bytes_max, size_t* consumed, int* pure_ack);
 const uint8_t* picoquic_skip_path_abandon_frame(const uint8_t* bytes, const uint8_t* bytes_max);

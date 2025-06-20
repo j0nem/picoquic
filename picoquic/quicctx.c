@@ -972,6 +972,11 @@ int picoquic_create_multicast_channel(picoquic_quic_t* quic, picoquic_multicast_
 // Currently only one multicast channel is supported by this method
 int picoquic_schedule_mc_announce_and_join(picoquic_cnx_t* cnx, picoquic_multicast_channel_t* channel) 
 {
+    if (cnx->is_multicast_enabled == 0) {
+        fprintf(stderr, "Could not initiate multicast join: Multicast not enabled on cnx\n");
+        return -1;
+    }
+
     picoquic_mc_channel_in_cnx_t* new_channel_in_cnx = malloc(sizeof(picoquic_mc_channel_in_cnx_t));
     if (new_channel_in_cnx == NULL) {
         fprintf(stderr, "could not create picoquic_mc_channel_in_cnx_t: malloc failed\n");

@@ -408,6 +408,30 @@ uint64_t picoquic_val64_connection_id(picoquic_connection_id_t cnx_id)
     return val64;
 }
 
+uint8_t picoquic_format_multicast_channel_id(uint8_t* bytes, size_t bytes_max, picoquic_multicast_channel_id_t ch_id)
+{
+    uint8_t copied = ch_id.id_len;
+    if (copied > bytes_max || copied == 0) {
+        copied = 0;
+    } else {
+        memcpy(bytes, ch_id.id, copied);
+    }
+
+    return copied;
+}
+
+uint8_t picoquic_parse_multicast_channel_id(const uint8_t * bytes, uint8_t len, picoquic_multicast_channel_id_t * ch_id)
+{
+    if (len <= PICOQUIC_CONNECTION_ID_MAX_SIZE) {
+        ch_id->id_len = len;
+        memcpy(ch_id->id, bytes, len);
+    } else {
+        len = 0;
+        ch_id->id_len = 0;
+    }
+    return len;
+}
+
 /* Hash function for addresses. */
 
 size_t picoquic_hash_addr_bytes(const struct sockaddr* addr, uint8_t* bytes)

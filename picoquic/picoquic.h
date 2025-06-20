@@ -727,7 +727,7 @@ int picoquic_set_default_multicast_client_params(picoquic_quic_t* quic, picoquic
 int picoquic_create_multicast_channel(picoquic_quic_t* quic, picoquic_multicast_channel_t** mc_channel, int max_clients, struct sockaddr_storage* group_ipv4, struct sockaddr_storage* group_ipv6);
 
 /* Prepare MC_ANNOUNCE, MC_KEY and MC_JOIN frame and queue sending to client */
-void picoquic_initiate_mc_announce_and_join(picoquic_cnx_t* cnx, picoquic_multicast_channel_t* channel);
+int picoquic_schedule_mc_announce_and_join(picoquic_cnx_t* cnx, picoquic_multicast_channel_t* channel);
 
 /* Set the Address Discovery mode for the context */
 void picoquic_set_default_address_discovery_mode(picoquic_quic_t* quic, int mode);
