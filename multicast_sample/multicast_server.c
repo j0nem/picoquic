@@ -330,7 +330,6 @@ int multicast_server_callback(picoquic_cnx_t *cnx,
                         {
                             /* If data needs to be sent, set the context as active */
                             ret = picoquic_mark_active_stream(cnx, stream_id, 1, stream_ctx);
-                            picoquic_set_stream_path_affinity(cnx, stream_id, 1);
                         }
                         else
                         {
@@ -416,8 +415,8 @@ int multicast_server_callback(picoquic_cnx_t *cnx,
             /* Check that the transport parameters are what the multicast expects */
             if (cnx->is_multicast_enabled == 1 && server_ctx->mc_channel != NULL && server_ctx->multicast_initialized != 1) {
                 // send announce, key and join frame to client
-                fprintf(stdout, "send mc_announce and mc_join\n");
-                picoquic_initiate_mc_announce_and_join(cnx, server_ctx->mc_channel);
+                fprintf(stdout, "schedule mc_announce and mc_join\n");
+                picoquic_schedule_mc_announce_and_join(cnx, server_ctx->mc_channel);
                 server_ctx->multicast_initialized = 1;
             }
             break;
