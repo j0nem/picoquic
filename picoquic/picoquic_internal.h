@@ -610,6 +610,7 @@ typedef int (*picoquic_performance_log_fn)(picoquic_quic_t* quic, picoquic_cnx_t
 
 typedef struct st_picoquic_multicast_channel_t {
     picoquic_multicast_channel_id_t channel_id;
+    struct sockaddr_storage source_ip; // TODO MC: This is currently zero in server mode, maybe change if needed later
     struct sockaddr_storage group_ip;
     uint16_t header_protection_algorithm;
     uint16_t aead_algorithm;

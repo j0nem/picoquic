@@ -657,6 +657,28 @@ int picoquic_store_loopback_addr(struct sockaddr_storage* stored_addr, int addr_
     return ret;
 }
 
+int picoquic_store_byte_addr(struct sockaddr_storage* stored_addr, int addr_family, const uint8_t* addr_bytes, uint16_t port) {
+    memset(stored_addr, 0, sizeof(*stored_addr));
+    
+    if (addr_family == AF_INET) { 
+        struct sockaddr_in *addr4 = (struct sockaddr_in *)stored_addr;
+        addr4->sin_family = addr_family;
+        addr4->sin_port = htons(port); 
+        memcpy(&addr4->sin_addr, addr_bytes, 4);
+    } 
+    else if (addr_family == AF_INET6) {
+        struct sockaddr_in6 *addr6 = (struct sockaddr_in *)stored_addr;
+        addr6->sin6_family = addr_family;
+        addr6->sin6_port = htons(port); 
+        memcpy(&addr6->sin6_addr, addr_bytes, 16);
+    }
+    else {
+        return -1;
+    }
+
+    return 0;
+}
+
 /* Return a directory path based on solution dir and file name */
 char const* picoquic_solution_dir = NULL;
 

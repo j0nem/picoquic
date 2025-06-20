@@ -6186,7 +6186,7 @@ uint8_t* picoquic_format_mc_announce_frame(uint8_t* bytes, const uint8_t* bytes_
         *more_data = 1;
         return bytes0;
     } else {
-        bytes++;
+        bytes += bytes_copied;
     }
 
     // Source IP
@@ -6251,6 +6251,97 @@ uint8_t* picoquic_format_mc_announce_frame(uint8_t* bytes, const uint8_t* bytes_
     return bytes;
 }
 
+const uint8_t* picoquic_decode_mc_announce_frame(picoquic_cnx_t* cnx, const uint8_t* bytes, const uint8_t* bytes_max, uint64_t frame_id64) {
+    if (!cnx->is_multicast_enabled || !cnx->client_mode) {
+        picoquic_connection_error_ex(cnx, PICOQUIC_TRANSPORT_FRAME_FORMAT_ERROR, frame_id64, "received unexpected MC_ANNOUNCE frame");
+        return NULL;
+    }
+
+    // TODO MC: Check if a channel with that channel ID already exists in context -> double MC_ANNOUNCE frame (error)
+
+    int addr_family;
+    if (frame_id64 == picoquic_frame_type_mc_announce_v4) {
+        addr_family = AF_INET;
+    } 
+    else if (frame_id64 == picoquic_frame_type_mc_announce_v6) {
+        addr_family = AF_INET6;
+    } 
+    else {
+        return NULL;
+    }
+
+    picoquic_multicast_channel_t* channel = malloc(sizeof(picoquic_multicast_channel_t));
+    if (channel == NULL) {
+        fprintf(stderr, "could not create multicast channel: malloc failed\n");
+        return NULL;
+    }
+
+    uint8_t id_len;
+    picoquic_multicast_channel_id_t ch_id;
+
+    // Channel ID Length
+    if ((bytes = picoquic_frames_uint8_decode(bytes, bytes_max, id_len)) == NULL) {
+        return NULL;
+    }
+
+    // Channel ID
+    uint8_t bytes_copied = picoquic_parse_multicast_channel_id(bytes, id_len, &channel->channel_id);
+    if (bytes_copied == 0) {
+        return NULL;
+    } else {
+        bytes += bytes_copied;
+    }
+
+    // if not enough bytes received for two addresses (src and group), then error
+    if ((addr_family == AF_INET && bytes + 8 > bytes_max)
+    || (addr_family == AF_INET6 && bytes + 32 > bytes_max)) 
+    {
+        return NULL;
+    }
+    
+    // Source IP
+    if (picoquic_store_byte_addr(channel->source_ip, addr_family, bytes, 0) == NULL) {
+        return NULL;
+    }
+
+    if (addr_family == AF_INET) {
+        bytes += 4;
+    }
+    else {
+        bytes += 16;
+    }
+
+    // UDP Port
+    uint16_t udp_port;
+
+    if ((addr_family == AF_INET && (bytes = picoquic_frames_uint16_decode(bytes + 4, bytes_max, udp_port)) == NULL)
+        || (addr_family == AF_INET6 && (bytes = picoquic_frames_uint16_decode(bytes + 16, bytes_max, udp_port)) == NULL)
+    ) {
+        return NULL;
+    }
+
+    // Group Addr
+    if (picoquic_store_byte_addr(channel->group_ip, addr_family, bytes, udp_port) == NULL) {
+        return NULL;
+    }
+
+    // Bytes of IP addr + port
+    if (addr_family == AF_INET) {
+        bytes += 6; 
+    }
+    else {
+        bytes += 18;
+    }
+
+    // Header Protection Algo
+    // Header Secret Length
+    if ((bytes = picoquic_frames_uint16_encode(bytes, bytes_max, channel->header_protection_algorithm)) == NULL
+    || (bytes = picoquic_frames_varint_encode(bytes, bytes_max, channel->header_secret.secret_len)) == NULL)  {
+        return NULL;
+    }
+
+    // TODO MC: Decode Secret, AEAD algo, Integrity hash algo, max rate, max ack delay
+}
 
 /* BDP frames as defined in https://tools.ietf.org/html/draft-kuhn-quic-0rtt-bdp-09
 */
@@ -6648,6 +6739,12 @@ int picoquic_decode_frames(picoquic_cnx_t* cnx, picoquic_path_t * path_x, const 
                             is_path_probing_frame = 1;
                             ack_needed = 1;
                             bytes = picoquic_decode_observed_address_frame(cnx, bytes, bytes_max, path_x, frame_id64);
+                            break;
+
+                        case picoquic_frame_type_mc_announce_v4:
+                        case picoquic_frame_type_mc_announce_v6:
+                            bytes = picoquic_decode_mc_announce_frame(cnx, bytes, bytes_max, frame_id64); 
+                            ack_needed = 1;
                             break;
                         default:
                             /* Not implemented yet! */
