@@ -2889,10 +2889,6 @@ uint8_t * picoquic_prepare_multicast_init_frames(picoquic_cnx_t* cnx, picoquic_p
                 bytes = bytes_next;
                 ch->state = 2; // "announced"
             }
-            else {
-                ch->state = 99; // "error"
-                fprintf(stdout, "Formatting MC_ANNOUNCE failed\n");
-            }
         }
         // TODO MC: Implement Format MC_KEY and MC_JOIN frame
         // if (ch->key_available == 0) {
