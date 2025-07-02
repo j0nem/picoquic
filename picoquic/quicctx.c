@@ -983,6 +983,11 @@ int picoquic_schedule_mc_announce_and_join(picoquic_cnx_t* cnx, picoquic_multica
         return -1;
     }
 
+    if (picoquic_multicast_channel_id_exists_in_cnx(&channel->channel_id, cnx) != 0) {
+        fprintf(stderr, "could not schedule multicast announce and join: channel was already added to connection\n");
+        return -1;
+    }
+
     // alloc space for one new pointer in cnx->mc_channels
     picoquic_mc_channel_in_cnx_t** new_channel_list = (picoquic_mc_channel_in_cnx_t **)malloc((cnx->nb_mc_channels + 1) * sizeof(picoquic_mc_channel_in_cnx_t *));
 

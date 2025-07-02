@@ -1021,7 +1021,7 @@ int picoquic_receive_transport_extensions(picoquic_cnx_t* cnx, int extension_mod
                     } 
 
                     // CLEAN MC: Debug prints
-                    fprintf(stdout, "Received: IPv4: %i, IPv6: %i, Max Aggr: %lu, Max Channels: %lu, Hash Algos supported: %lu, Encr Algos supported: %lu\n", 
+                    fprintf(stdout, "Received multicast_client_params: IPv4: %i, IPv6: %i, Max Aggr: %lu, Max Channels: %lu, Hash Algos supported: %lu, Encr Algos supported: %lu\n", 
                         cnx->remote_parameters.multicast_client_params.ipv4_channels_allowed, 
                         cnx->remote_parameters.multicast_client_params.ipv6_channels_allowed, 
                         cnx->remote_parameters.multicast_client_params.max_aggregate_rate,

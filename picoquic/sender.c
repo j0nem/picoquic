@@ -2882,7 +2882,7 @@ uint8_t * picoquic_prepare_multicast_init_frames(picoquic_cnx_t* cnx, picoquic_p
         picoquic_mc_channel_in_cnx_t* ch = cnx->mc_channels[i];
 
         // if in state "announce_scheduled"
-        if (ch->state < 2) {
+        if (ch->state < 2 && !cnx->client_mode) {
             uint8_t *bytes_next = picoquic_format_mc_announce_frame(bytes, bytes_max, ch->channel, path_x, more_data);
             if (bytes_next > bytes) {
                 *is_pure_ack = 0;

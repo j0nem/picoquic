@@ -258,12 +258,12 @@ typedef struct st_picoquic_multicast_channel_id_t {
 
 typedef struct st_picoquic_multicast_header_secret_t {
     uint8_t secret[48]; // max support is SHA-384 (no SHA-512 for now)
-    uint8_t secret_len;
+    uint64_t secret_len;
 } picoquic_multicast_header_secret_t;
 
 typedef struct st_picoquic_multicast_aead_secret_t {
     uint8_t secret[48]; // max support is SHA-384 (no SHA-512 for now)
-    uint8_t secret_len;
+    uint64_t secret_len;
     uint64_t key_seq_number;
     uint64_t from_pkt_number;
 } picoquic_multicast_aead_secret_t;
