@@ -6195,6 +6195,7 @@ uint8_t* picoquic_format_mc_announce_frame(uint8_t* bytes, const uint8_t* bytes_
     }
 
     // Source IP
+    // TODO MC: Make source address configurable
     struct sockaddr_storage* src_addr = &path_x->local_addr;
     uint8_t* src_addr_text;
     uint8_t src_addr_text_len;
@@ -6355,6 +6356,9 @@ const uint8_t* picoquic_decode_mc_announce_frame(picoquic_cnx_t* cnx, const uint
     || (bytes = picoquic_frames_uint16_decode(bytes, bytes_max, &channel->hash_algorithm)) == NULL) {
         return NULL;
     }
+
+    // Max Rate
+    // Max ACK delay
     if((bytes = picoquic_frames_varint_decode(bytes, bytes_max, &channel->max_rate)) == NULL
     || (bytes = picoquic_frames_varint_decode(bytes, bytes_max, &channel->max_ack_delay)) == NULL)  {
         return NULL;
@@ -6368,13 +6372,10 @@ const uint8_t* picoquic_decode_mc_announce_frame(picoquic_cnx_t* cnx, const uint
 
     picoquic_mc_channel_in_cnx_t** new_channel_list = (picoquic_mc_channel_in_cnx_t **)malloc((cnx->nb_mc_channels + 1) * sizeof(picoquic_mc_channel_in_cnx_t *));
 
-    if (new_channel_list != NULL)
-    {
-        if (cnx->mc_channels != NULL)
-        {
+    if (new_channel_list != NULL) {
+        if (cnx->mc_channels != NULL) {
             memset(new_channel_list, 0, sizeof(picoquic_mc_channel_in_cnx_t*));
-            if (cnx->nb_mc_channels > 0)
-            {
+            if (cnx->nb_mc_channels > 0) {
                 memcpy(new_channel_list, cnx->mc_channels, cnx->nb_mc_channels * sizeof(picoquic_mc_channel_in_cnx_t *));
             }
             free(cnx->mc_channels);
