@@ -983,7 +983,7 @@ int picoquic_schedule_mc_announce_and_join(picoquic_cnx_t* cnx, picoquic_multica
         return -1;
     }
 
-    if (picoquic_multicast_channel_id_exists_in_cnx(&channel->channel_id, cnx) != 0) {
+    if (picoquic_find_multicast_channel_in_cnx(&channel->channel_id, cnx) != NULL) {
         fprintf(stderr, "could not schedule multicast announce and join: channel was already added to connection\n");
         return -1;
     }
