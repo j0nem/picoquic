@@ -901,6 +901,20 @@ static void picoquic_create_random_mc_channel_id(picoquic_quic_t* quic, picoquic
     channel_id->id_len = id_length;
 }
 
+picoquic_mc_channel_in_cnx_t* picoquic_find_multicast_channel_in_cnx(picoquic_multicast_channel_id_t * ch_id, picoquic_cnx_t* cnx)
+{
+    for (int i = 0; i < cnx->nb_mc_channels; i++) {
+        picoquic_mc_channel_in_cnx_t* channel = cnx->mc_channels[i];
+        int len = (int) channel->channel->channel_id.id_len < (int) ch_id->id_len ? (int) channel->channel->channel_id.id_len : (int) ch_id->id_len;
+        
+        if (memcmp(channel->channel->channel_id.id, ch_id->id, len) == 0) {
+            return channel;
+        }
+    }
+
+    return NULL;
+}
+
 int picoquic_create_multicast_channel(picoquic_quic_t* quic, picoquic_multicast_channel_t** mc_channel, int max_clients, 
     struct sockaddr_storage* group_ipv4, struct sockaddr_storage* group_ipv6) 
 {
@@ -915,6 +929,7 @@ int picoquic_create_multicast_channel(picoquic_quic_t* quic, picoquic_multicast_
     }
 
     picoquic_multicast_channel_t* new_channel = malloc(sizeof(picoquic_multicast_channel_t));
+    memset(new_channel, 0, sizeof(picoquic_multicast_channel_t));
     if (new_channel == NULL) {
         fprintf(stderr, "could not create multicast channel: malloc failed\n");
         return -1;

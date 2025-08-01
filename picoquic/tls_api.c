@@ -1430,7 +1430,7 @@ int picoquic_compute_multicast_secrets(picoquic_quic_t * quic, picoquic_multicas
     ptls_iovec_t salt;
     size_t rand_bytes_length = quic->local_cnxid_length;
 
-    if (channel->nb_aead_secrets > 0 || &channel->header_secret.secret != NULL) {
+    if (channel->nb_aead_secrets > 0 || channel->header_secret.secret_len > 0) {
         fprintf(stdout, "Error while computing initial multicast secrets: Already available\n");
         return -1;
     }

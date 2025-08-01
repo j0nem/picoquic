@@ -2894,8 +2894,9 @@ uint8_t * picoquic_prepare_multicast_init_frames(picoquic_cnx_t* cnx, picoquic_p
         // send MC_KEY of latest AEAD key if no key was sent on this cnx yet
         if (ch->key_available < 1 && ch->latest_key_sequence_available == 0 && ch->channel->nb_aead_secrets > 0) {
             int key_sequence_number = ch->channel->nb_aead_secrets - 1;
+            picoquic_multicast_aead_secret_t* aead = ch->channel->aead_secrets[ch->channel->nb_aead_secrets-1];
 
-            uint8_t *bytes_next = picoquic_format_mc_key_frame(bytes, bytes_max, ch->channel, key_sequence_number, more_data);
+            uint8_t *bytes_next = picoquic_format_mc_key_frame(bytes, bytes_max, ch->channel, aead, more_data);
             if (bytes_next > bytes) {
                 *is_pure_ack = 0;
                 bytes = bytes_next;
