@@ -2908,7 +2908,7 @@ uint8_t * picoquic_prepare_multicast_init_frames(picoquic_cnx_t* cnx, picoquic_p
             }
         }
         
-        // TODO MC: Implement Format MC_JOIN frame
+        // Send MC_JOIN frame
         if (ch->state < 5 && ch->state >= 2 && ch->key_acked > 0 && ch->mc_announce_acked > 0) {
             uint8_t *bytes_next = picoquic_format_mc_join_frame(bytes, bytes_max, ch->channel, cnx, more_data);
             if (bytes_next > bytes) {
