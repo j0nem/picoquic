@@ -167,7 +167,10 @@ typedef enum {
     picoquic_frame_type_observed_address_v6 = 0x9f81a7,
     picoquic_frame_type_mc_announce_v4 = 0xff3e811,
     picoquic_frame_type_mc_announce_v6 = 0xff3e812,
-    picoquic_frame_type_mc_key = 0xff3e801
+    picoquic_frame_type_mc_key = 0xff3e801,
+    picoquic_frame_type_mc_join = 0xff3e802,
+    picoquic_frame_type_mc_state_multicast = 0xff3e80b,
+    picoquic_frame_type_mc_state_application = 0xff3e80c,
 } picoquic_frame_type_enum_t;
 
 /* PMTU discovery requirement status */
@@ -669,18 +672,29 @@ typedef enum {
 typedef struct st_picoquic_mc_channel_in_cnx_t {
     picoquic_multicast_channel_t* channel;
     picoquic_mc_state_enum state;
-    picoquic_mc_state_reason_enum state_reason;
+    int key_available;
+    int state_frame_available;
+    int limits_frame_available;
     uint64_t latest_key_sequence_available;
+    uint64_t latest_state_sequence_available;
+    uint64_t latest_limits_sequence_available;
+    
+    // TODO MC: Find solution for sequence numbers starting from 0, but default value for these fields is also 0
+    //          Things like "key_available", "key acked", "mc_limits_acked", "mc_state_acked" could be omitted then
+
+    // the following is used on server only:
     int mc_announce_acked;
     int mc_join_acked;
     int mc_leave_acked;
     int mc_retire_acked;
-    int mc_state_joined_acked;
-    int mc_state_left_acked;
-    int mc_state_declined_join_acked;
-    int mc_state_retired_acked;
-    int key_available;
-    int key_acked;
+    int key_acked;                      // At least one MC_KEY frame was acked
+    uint64_t latest_key_sequence_acked;
+
+    // the following is used on client only:
+    int mc_state_acked;                 // At least one MC_STATE frame was acked
+    int mc_limits_acked;                // At least one MC_LIMITS frame was acked
+    uint64_t latest_state_sequence_acked;
+    uint64_t latest_limits_sequence_acked;
 } picoquic_mc_channel_in_cnx_t;
 
 /* QUIC context, defining the tables of connections,
@@ -2132,13 +2146,16 @@ uint8_t* picoquic_prepare_observed_address_frame(uint8_t* bytes, const uint8_t* 
     int* more_data, int* is_pure_ack);
 void picoquic_update_peer_addr(picoquic_path_t* path_x, const struct sockaddr* peer_addr);
 
-picoquic_mc_channel_in_cnx_t* picoquic_find_multicast_channel_in_cnx(picoquic_multicast_channel_id_t * ch_id, picoquic_cnx_t* cnx);
-
+picoquic_mc_channel_in_cnx_t* picoquic_find_multicast_channel_in_cnx(picoquic_multicast_channel_id_t * ch_id, 
+    picoquic_cnx_t* cnx);
 uint8_t* picoquic_format_mc_announce_frame(uint8_t* bytes, uint8_t* bytes_max, 
     picoquic_multicast_channel_t* channel, picoquic_path_t* path_x, int * more_data);
-
 uint8_t* picoquic_format_mc_key_frame(uint8_t* bytes, uint8_t* bytes_max, 
     picoquic_multicast_channel_t* channel, picoquic_multicast_aead_secret_t* aead, int* more_data);
+uint8_t* picoquic_format_mc_join_frame(uint8_t* bytes, uint8_t* bytes_max, 
+    picoquic_multicast_channel_t* channel, picoquic_cnx_t* cnx, int* more_data);
+uint8_t* picoquic_format_mc_state_frame(uint8_t* bytes, uint8_t* bytes_max, picoquic_mc_channel_in_cnx_t* channel, int * more_data, 
+    picoquic_frame_type_enum_t ftype, picoquic_mc_state_frame_enum state, picoquic_mc_state_reason_enum reason);
 
 int picoquic_skip_frame(const uint8_t* bytes, size_t bytes_max, size_t* consumed, int* pure_ack);
 const uint8_t* picoquic_skip_path_abandon_frame(const uint8_t* bytes, const uint8_t* bytes_max);
