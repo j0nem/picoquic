@@ -129,6 +129,18 @@ const char * ftype2str(picoquic_frame_type_enum_t ftype)
         return "observed_address_v4";
     case picoquic_frame_type_observed_address_v6:
         return "observed_address_v6";
+    case picoquic_frame_type_mc_announce_v4:
+        return "mc_announce_v4";
+    case picoquic_frame_type_mc_announce_v6:
+        return "mc_announce_v6";
+    case picoquic_frame_type_mc_key:
+        return "mc_key";
+    case picoquic_frame_type_mc_join:
+        return "mc_join";
+    case picoquic_frame_type_mc_state_multicast:
+        return "mc_state_multicast";
+    case picoquic_frame_type_mc_state_application:
+        return "mc_state_application";
     default:
         return "unknown";
     }

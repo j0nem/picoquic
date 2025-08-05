@@ -2150,12 +2150,20 @@ picoquic_mc_channel_in_cnx_t* picoquic_find_multicast_channel_in_cnx(picoquic_mu
     picoquic_cnx_t* cnx);
 uint8_t* picoquic_format_mc_announce_frame(uint8_t* bytes, uint8_t* bytes_max, 
     picoquic_multicast_channel_t* channel, picoquic_path_t* path_x, int * more_data);
+const uint8_t* picoquic_skip_mc_announce_frame(const uint8_t* bytes, const uint8_t* bytes_max, 
+    uint64_t ftype);
 uint8_t* picoquic_format_mc_key_frame(uint8_t* bytes, uint8_t* bytes_max, 
     picoquic_multicast_channel_t* channel, picoquic_multicast_aead_secret_t* aead, int* more_data);
+const uint8_t* picoquic_skip_mc_key_frame(const uint8_t* bytes, 
+    const uint8_t* bytes_max);
 uint8_t* picoquic_format_mc_join_frame(uint8_t* bytes, uint8_t* bytes_max, 
     picoquic_multicast_channel_t* channel, picoquic_cnx_t* cnx, int* more_data);
+const uint8_t* picoquic_skip_mc_join_frame(const uint8_t* bytes, 
+    const uint8_t* bytes_max);
 uint8_t* picoquic_format_mc_state_frame(uint8_t* bytes, uint8_t* bytes_max, picoquic_mc_channel_in_cnx_t* channel, int * more_data, 
     picoquic_frame_type_enum_t ftype, picoquic_mc_state_frame_enum state, picoquic_mc_state_reason_enum reason);
+const uint8_t* picoquic_skip_mc_state_frame(const uint8_t* bytes, 
+    const uint8_t* bytes_max, uint64_t ftype);
 
 int picoquic_skip_frame(const uint8_t* bytes, size_t bytes_max, size_t* consumed, int* pure_ack);
 const uint8_t* picoquic_skip_path_abandon_frame(const uint8_t* bytes, const uint8_t* bytes_max);

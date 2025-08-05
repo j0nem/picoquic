@@ -212,6 +212,80 @@ void qlog_preferred_address(FILE* f, bytestream* s, uint64_t len)
     s->size = old_size;
 }
 
+void qlog_tp_multicast_client_params(FILE* f, bytestream* s, uint64_t len) {
+    size_t old_size = s->size;
+    size_t ptr_max = s->ptr + (size_t)len;
+
+    if (ptr_max > s->size) {
+        fprintf(f, ",\n    \"mc_client_params_parameter_length\": %zu", (size_t)len);
+        fprintf(f, ",\n    \"bytes_available\": %zu", s->size - s->ptr);
+    }
+    else {
+        fprintf(f, "\"multicast_client_params\": ");
+        s->size = s->ptr + (size_t)len;
+        fprintf(f, "{ ");
+        if (len < 5 || len == 0) {
+            fprintf(f, "\"bad_length\": \"%" PRIu64, len);
+        }
+        else {
+            uint8_t first_byte;
+            byteread_int8(s, &first_byte);
+            fprintf(f, "\"ipv4_channels_allowed\": %i", first_byte & (uint8_t) 1);
+            fprintf(f, ", \"ipv6_channels_allowed\": %i", first_byte & (uint8_t) 1 << (uint8_t) 1);
+            
+            uint64_t max_agg_rate;
+            byteread_vint(s, &max_agg_rate);
+            fprintf(f, ", \"max_aggregate_rate\": %lu", max_agg_rate);
+
+            uint64_t max_channel_ids;
+            byteread_vint(s, &max_channel_ids);
+            fprintf(f, ", \"max_channel_ids\": %lu", max_channel_ids);
+
+            uint64_t hash_algos_supported;
+            byteread_vint(s, &hash_algos_supported);
+            fprintf(f, ", \"hash_algorithms_supported\": %lu", hash_algos_supported);
+
+            uint64_t encr_algos_supported;
+            byteread_vint(s, &encr_algos_supported);
+            fprintf(f, ", \"encryption_algorithms_supported\": %lu", encr_algos_supported);
+
+            if (hash_algos_supported > 0) {
+                fprintf(f, ", \"hash_algorithm_list\": [ ");
+
+                for (uint64_t i = 0; i < hash_algos_supported; i++) {
+                    uint16_t algo;
+                    byteread_int16(s, &algo);
+                    if (i == 0) {
+                        printf("\"0x%04X\"", algo);
+                    } else {
+                        printf(", \"0x%04X\"", algo);
+                    }
+                }
+
+                fprintf(f, "]");
+            }
+            if (encr_algos_supported > 0) {
+                fprintf(f, ", \"encryption_algorithm_list\": [ ");
+
+                for (uint64_t i = 0; i < encr_algos_supported; i++) {
+                    uint16_t algo;
+                    byteread_int16(s, &algo);
+                    if (i == 0) {
+                        printf("\"0x%04X\"", algo);
+                    } else {
+                        printf(", \"0x%04X\"", algo);
+                    }
+                }
+
+                fprintf(f, " ]");
+            }
+        }
+        fprintf(f, "}");
+        s->size = old_size;
+    }
+
+}
+
 void qlog_tp_version_negotiation(FILE* f, bytestream* s, uint64_t len)
 {
     size_t old_size = s->size;
@@ -375,6 +449,12 @@ int qlog_transport_extensions(FILE* f, bytestream* v, size_t tp_length)
                     break;
                 case picoquic_tp_address_discovery:
                     qlog_vint_transport_extension(f, "address_discovery", s, extension_length);
+                    break;
+                case picoquic_tp_multicast_server_support:
+                    qlog_boolean_transport_extension(f, "multicast_server_support", s, extension_length);
+                    break;
+                case picoquic_tp_multicast_client_params:
+                    qlog_tp_multicast_client_params(f, s, extension_length);
                     break;
                 default:
                     /* dump unknown extensions */
@@ -1158,6 +1238,234 @@ void qlog_bdp_frame(FILE* f, bytestream* s)
     qlog_string(f, s, ip_len);
 }
 
+void qlog_mc_announce_frame(uint64_t ftype, FILE* f, bytestream* s)
+{
+    uint64_t channel_id_length = 0;
+    byteread_vint(s, &channel_id_length);
+    fprintf(f, ", \"channel_id_length\": %"PRIu64"", channel_id_length);
+
+    fprintf(f, ", \"channel_id\": \"");
+    for (uint64_t i = 0; i < channel_id_length; i++) {
+        uint8_t byte = 0;
+        byteread_int8(s, &byte);
+        if (i == 0) {
+            fprintf(f, "%02X", byte);
+        } else {
+            fprintf(f, " %02X", byte);
+        }
+    }
+    fprintf(f, "\", \"src_ip\": \"");
+
+    if ((ftype & 1) != 0) {
+        /* IPv4 address */
+        for (int x = 0; x < 4 && s->ptr < s->size; x++) {
+            if (x != 0) {
+                fprintf(f, ".");
+            }
+            fprintf(f, "%d", s->data[s->ptr++]);
+        }
+    }
+    else {
+        /* IPv6 address */
+        for (int x = 0; x < 8 && s->ptr < s->size; x++) {
+            uint16_t w = 0;
+            for (int y = 0; y < 2 && s->ptr < s->size; y++) {
+                w <<= 8;
+                w += s->data[s->ptr++];
+            }
+            if (x != 0) {
+                fprintf(f, ":");
+            }
+            fprintf(f, "%x", w);
+        }
+    }
+    fprintf(f, "\", \"group_ip\": \"");
+
+    if ((ftype & 1) != 0) {
+        /* IPv4 address */
+        for (int x = 0; x < 4 && s->ptr < s->size; x++) {
+            if (x != 0) {
+                fprintf(f, ".");
+            }
+            fprintf(f, "%d", s->data[s->ptr++]);
+        }
+    }
+    else {
+        /* IPv6 address */
+        for (int x = 0; x < 8 && s->ptr < s->size; x++) {
+            uint16_t w = 0;
+            for (int y = 0; y < 2 && s->ptr < s->size; y++) {
+                w <<= 8;
+                w += s->data[s->ptr++];
+            }
+            if (x != 0) {
+                fprintf(f, ":");
+            }
+            fprintf(f, "%x", w);
+        }
+    }
+
+    unsigned int port = 0;
+    for (int y = 0; y < 2 && s->ptr < s->size; y++) {
+        port <<= 8;
+        port += s->data[s->ptr++];
+    }
+    fprintf(f, "\", \"port\": \"%u\"", port);
+
+    uint16_t header_algo = 0;
+    byteread_int16(s, &header_algo);
+    fprintf(f, ", \"header_protection_algorithm\": \"0x%04X\"", header_algo);
+
+    uint64_t secret_len = 0;
+    byteread_vint(s, &secret_len);
+    fprintf(f, ", \"header_secret_length\": %"PRIu64"", secret_len);
+
+    fprintf(f, ", \"header_secret\": \"");
+    for (uint64_t i = 0; i < secret_len; i++) {
+        uint8_t byte = 0;
+        byteread_int8(s, &byte);
+        if (i == 0) {
+            fprintf(f, "%02X", byte);
+        } else {
+            fprintf(f, " %02X", byte);
+        }
+    }
+
+    uint16_t aead_algo = 0;
+    byteread_int16(s, &aead_algo);
+    fprintf(f, "\", \"aead_algorithm\": \"0x%04X\"", aead_algo);
+
+    uint16_t hash_algo = 0;
+    byteread_int16(s, &hash_algo);
+    fprintf(f, ", \"integrity_hash_algorithm\": \"0x%04X\"", hash_algo);
+
+    uint64_t max_rate = 0;
+    byteread_vint(s, &max_rate);
+    fprintf(f, ", \"max_rate\": %"PRIu64"", max_rate);
+
+    uint64_t max_ack_delay = 0;
+    byteread_vint(s, &max_ack_delay);
+    fprintf(f, ", \"max_ack_delay\": %"PRIu64"", max_ack_delay);
+}
+
+void qlog_mc_key_frame(FILE* f, bytestream* s)
+{
+    uint64_t channel_id_length = 0;
+    byteread_vint(s, &channel_id_length);
+    fprintf(f, ", \"channel_id_length\": %"PRIu64"", channel_id_length);
+
+    fprintf(f, ", \"channel_id\": \"");
+    for (uint64_t i = 0; i < channel_id_length; i++) {
+        uint8_t byte = 0;
+        byteread_int8(s, &byte);
+        if (i == 0) {
+            fprintf(f, "%02X", byte);
+        } else {
+            fprintf(f, " %02X", byte);
+        }
+    }
+
+    uint64_t key_seq_number = 0;
+    byteread_vint(s, &key_seq_number);
+    fprintf(f, "\", \"key_sequence_number\": %"PRIu64"", key_seq_number);
+
+    uint64_t from_pkt_nb = 0;
+    byteread_vint(s, &from_pkt_nb);
+    fprintf(f, ", \"from_packet_number\": %"PRIu64"", from_pkt_nb);
+
+    uint64_t secret_length = 0;
+    byteread_vint(s, &secret_length);
+    fprintf(f, ", \"secret_length\": %"PRIu64"", secret_length);
+
+    fprintf(f, ", \"secret\": \"");
+    for (uint64_t i = 0; i < secret_length; i++) {
+        uint8_t byte = 0;
+        byteread_int8(s, &byte);
+        if (i == 0) {
+            fprintf(f, "%02X", byte);
+        } else {
+            fprintf(f, " %02X", byte);
+        }
+    }
+    fprintf(f, "\"");
+}
+
+void qlog_mc_join_frame(FILE* f, bytestream* s)
+{
+    uint64_t channel_id_length = 0;
+    byteread_vint(s, &channel_id_length);
+    fprintf(f, ", \"channel_id_length\": %"PRIu64"", channel_id_length);
+
+    fprintf(f, ", \"channel_id\": \"");
+    for (uint64_t i = 0; i < channel_id_length; i++) {
+        uint8_t byte = 0;
+        byteread_int8(s, &byte);
+        if (i == 0) {
+            fprintf(f, "%02X", byte);
+        } else {
+            fprintf(f, " %02X", byte);
+        }
+    }
+
+    uint64_t limits_seq_num = 0;
+    byteread_vint(s, &limits_seq_num);
+    fprintf(f, "\", \"mc_limits_sequence_number\": %"PRIu64"", limits_seq_num);
+
+    uint64_t state_seq_num = 0;
+    byteread_vint(s, &state_seq_num);
+    fprintf(f, ", \"mc_state_sequence_number\": %"PRIu64"", state_seq_num);
+
+    uint64_t key_seq_num = 0;
+    byteread_vint(s, &key_seq_num);
+    fprintf(f, ", \"mc_key_sequence_number\": %"PRIu64"", key_seq_num);
+}
+
+void qlog_mc_state_frame(FILE* f, bytestream* s)
+{
+    uint64_t channel_id_length = 0;
+    byteread_vint(s, &channel_id_length);
+    fprintf(f, ", \"channel_id_length\": %"PRIu64"", channel_id_length);
+
+    fprintf(f, ", \"channel_id\": \"");
+    for (uint64_t i = 0; i < channel_id_length; i++) {
+        uint8_t byte = 0;
+        byteread_int8(s, &byte);
+        if (i == 0) {
+            fprintf(f, "%02X", byte);
+        } else {
+            fprintf(f, " %02X", byte);
+        }
+    }
+
+    uint64_t state_seq_num = 0;
+    byteread_vint(s, &state_seq_num);
+    fprintf(f, "\", \"mc_state_sequence_number\": %"PRIu64"", state_seq_num);
+
+    uint8_t state = 0;
+    byteread_int8(s, &state);
+    fprintf(f, ", \"state\": \"0x%01X\"", state);
+
+    uint64_t reason_code = 0;
+    byteread_vint(s, &reason_code);
+    fprintf(f, ", \"reason_code\": \"0x%02lX\"", reason_code);
+
+    uint64_t reason_phrase_len = 0;
+    byteread_vint(s, &reason_phrase_len);
+    fprintf(f, ", \"reason_phrase_length\": %"PRIu64"", reason_phrase_len);
+
+    fprintf(f, ", \"reason_phrase\": \"");
+    for (uint64_t i = 0; i < reason_phrase_len; i++) {
+        uint8_t byte = 0;
+        byteread_int8(s, &byte);
+        if (i == 0) {
+            fprintf(f, "%02X", byte);
+        } else {
+            fprintf(f, " %02X", byte);
+        }
+    }
+    fprintf(f, "\"");
+}
+
 void qlog_observed_address_frame(uint64_t ftype, FILE* f, bytestream* s)
 {
     unsigned int port = 0;
@@ -1337,6 +1645,20 @@ int qlog_packet_frame(bytestream * s, void * ptr)
     case picoquic_frame_type_observed_address_v4:
     case picoquic_frame_type_observed_address_v6:
         qlog_observed_address_frame(ftype, f, s);
+        break;
+    case picoquic_frame_type_mc_announce_v4:
+    case picoquic_frame_type_mc_announce_v6:
+        qlog_mc_announce_frame(ftype, f, s);
+        break;
+    case picoquic_frame_type_mc_key:
+        qlog_mc_key_frame(f, s);
+        break;
+    case picoquic_frame_type_mc_join:
+        qlog_mc_join_frame(f, s);
+        break;
+    case picoquic_frame_type_mc_state_multicast:
+    case picoquic_frame_type_mc_state_application:
+        qlog_mc_state_frame(f, s);
         break;
     default:
         s->ptr = ptr_before_type;
