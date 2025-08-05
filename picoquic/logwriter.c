@@ -530,6 +530,46 @@ static const uint8_t* picoquic_log_observed_address_frame(FILE* f, const uint8_t
     return bytes;
 }
 
+static const uint8_t* picoquic_log_mc_announce_frame(FILE* f, const uint8_t* bytes, const uint8_t* bytes_max, uint64_t ftype)
+{
+    const uint8_t* bytes_begin = bytes;
+    bytes = picoquic_log_varint_skip(bytes, bytes_max);
+    bytes = picoquic_skip_mc_announce_frame(bytes, bytes_max, ftype);     
+    picoquic_binlog_frame(f, bytes_begin, bytes);
+
+    return bytes;
+}
+
+static const uint8_t* picoquic_log_mc_key_frame(FILE* f, const uint8_t* bytes, const uint8_t* bytes_max)
+{
+    const uint8_t* bytes_begin = bytes;
+    bytes = picoquic_log_varint_skip(bytes, bytes_max);
+    bytes = picoquic_skip_mc_key_frame(bytes, bytes_max);     
+    picoquic_binlog_frame(f, bytes_begin, bytes);
+
+    return bytes;
+}
+
+static const uint8_t* picoquic_log_mc_join_frame(FILE* f, const uint8_t* bytes, const uint8_t* bytes_max)
+{
+    const uint8_t* bytes_begin = bytes;
+    bytes = picoquic_log_varint_skip(bytes, bytes_max);
+    bytes = picoquic_skip_mc_join_frame(bytes, bytes_max);     
+    picoquic_binlog_frame(f, bytes_begin, bytes);
+
+    return bytes;
+}
+
+static const uint8_t* picoquic_log_mc_state_frame(FILE* f, const uint8_t* bytes, const uint8_t* bytes_max, uint64_t ftype)
+{
+    const uint8_t* bytes_begin = bytes;
+    bytes = picoquic_log_varint_skip(bytes, bytes_max);
+    bytes = picoquic_skip_mc_state_frame(bytes, bytes_max, ftype);     
+    picoquic_binlog_frame(f, bytes_begin, bytes);
+
+    return bytes;
+}
+
 void picoquic_binlog_frames(FILE * f, const uint8_t* bytes, size_t length)
 {
     const uint8_t* bytes_max = bytes + length;
@@ -648,6 +688,20 @@ void picoquic_binlog_frames(FILE * f, const uint8_t* bytes, size_t length)
         case picoquic_frame_type_observed_address_v4:
         case picoquic_frame_type_observed_address_v6:
             bytes = picoquic_log_observed_address_frame(f, bytes, bytes_max, ftype);
+            break;
+        case picoquic_frame_type_mc_announce_v4:
+        case picoquic_frame_type_mc_announce_v6:
+            bytes = picoquic_log_mc_announce_frame(f, bytes, bytes_max, ftype);
+            break;
+        case picoquic_frame_type_mc_key:
+            bytes = picoquic_log_mc_key_frame(f, bytes, bytes_max);
+            break;
+        case picoquic_frame_type_mc_join:
+            bytes = picoquic_log_mc_join_frame(f, bytes, bytes_max);
+            break;
+        case picoquic_frame_type_mc_state_multicast:
+        case picoquic_frame_type_mc_state_application:
+            bytes = picoquic_log_mc_state_frame(f, bytes, bytes_max, ftype);
             break;
         default:
             bytes = picoquic_log_erroring_frame(f, bytes, bytes_max);

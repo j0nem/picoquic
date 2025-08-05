@@ -343,6 +343,24 @@ char const* textlog_frame_names(uint64_t frame_type)
     case picoquic_frame_type_observed_address_v6:
         frame_name = "observed_address_v6";
         break;
+    case picoquic_frame_type_mc_announce_v4:
+        frame_name = "mc_announce_v4";
+        break;
+    case picoquic_frame_type_mc_announce_v6:
+        frame_name = "mc_announce_v6";
+        break;
+    case picoquic_frame_type_mc_key:
+        frame_name = "mc_key";
+        break;
+    case picoquic_frame_type_mc_join:
+        frame_name = "mc_join";
+        break;
+    case picoquic_frame_type_mc_state_multicast:
+        frame_name = "mc_state_multicast";
+        break;
+    case picoquic_frame_type_mc_state_application:
+        frame_name = "mc_state_application";
+        break;
     default:
         if (PICOQUIC_IN_RANGE(frame_type, picoquic_frame_type_stream_range_min, picoquic_frame_type_stream_range_max)) {
             frame_name = "stream";
