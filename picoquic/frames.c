@@ -6475,7 +6475,7 @@ const uint8_t* picoquic_decode_mc_announce_frame(picoquic_cnx_t* cnx, const uint
         }
     }
     
-    new_channel_in_cnx->state = 2; // "announced"
+    new_channel_in_cnx->state = picoquic_mc_state_announced; 
 
     return bytes;
 }
@@ -6569,7 +6569,7 @@ int picoquic_check_mc_announce_needs_repeat(picoquic_cnx_t* cnx, const uint8_t* 
         /* If the channel is not in the connection (anymore?), no need to repeat this frame. */
         *no_need_to_repeat = 1;
     }
-    else if (ch_in_cnx->state >= 15 || ch_in_cnx->mc_announce_acked == 1) {
+    else if (ch_in_cnx->state >= picoquic_mc_state_leave_pending || ch_in_cnx->mc_announce_acked > 0) {
         /* If MC_ANNOUNCE was acked or client left the channel or intends to leave it, do not repeat */
         *no_need_to_repeat = 1;
     }
@@ -6826,7 +6826,7 @@ int picoquic_check_mc_key_needs_repeat(picoquic_cnx_t* cnx, const uint8_t* bytes
         /* If the channel is not in the connection (anymore?), no need to repeat this frame. */
         *no_need_to_repeat = 1;
     }
-    else if (ch_in_cnx->state >= 15 || (ch_in_cnx->key_acked == 1 && ch_in_cnx->latest_key_sequence_acked == ch_in_cnx->latest_key_sequence_available)) {
+    else if (ch_in_cnx->state >= picoquic_mc_state_leave_pending || (ch_in_cnx->key_acked > 0 && ch_in_cnx->latest_key_sequence_acked == ch_in_cnx->latest_key_sequence_available)) {
         /* If latest MC_KEY was acked or client left the channel or intends to leave it, do not repeat */
         *no_need_to_repeat = 1;
     }
@@ -6911,7 +6911,7 @@ uint8_t* picoquic_format_mc_join_frame(uint8_t* bytes, uint8_t* bytes_max, picoq
 
     picoquic_mc_channel_in_cnx_t* channel_found = picoquic_find_multicast_channel_in_cnx(&channel_id, cnx);
 
-    if (channel_found == NULL || channel_found->key_available == 0 || channel_found->state < 2 || channel_found->state >= 25) {
+    if (channel_found == NULL || channel_found->key_available == 0 || channel_found->state < picoquic_mc_state_announced || channel_found->state >= picoquic_mc_state_retire_pending) {
         fprintf(stderr, "Error: Received a MC_JOIN, but no MC_KEY and/or MC_ANNOUNCE was receved, or channel is already retired\n");
         return NULL;
     }
@@ -6937,7 +6937,7 @@ uint8_t* picoquic_format_mc_join_frame(uint8_t* bytes, uint8_t* bytes_max, picoq
         return NULL;
     }
 
-    channel_found->state = 5; // Join pending
+    channel_found->state = picoquic_mc_state_join_pending;
 
     return bytes;
 }
@@ -7019,7 +7019,7 @@ int picoquic_check_mc_join_needs_repeat(picoquic_cnx_t* cnx, const uint8_t* byte
         /* If the channel is not in the connection (anymore?), no need to repeat this frame. */
         *no_need_to_repeat = 1;
     }
-    else if (ch_in_cnx->state >= 10 || ch_in_cnx->mc_join_acked > 0) {
+    else if (ch_in_cnx->state >= picoquic_mc_state_join_confirmed || ch_in_cnx->mc_join_acked > 0) {
         /* If MC_JOIN was already acked or state is "join confirmed" or higher, no need to repeat MC_JOIN */
         *no_need_to_repeat = 1;
     }
@@ -7176,15 +7176,15 @@ const uint8_t* picoquic_decode_mc_state_frame(picoquic_cnx_t* cnx, const uint8_t
         if (reason != picoquic_mc_state_reason_requested_by_server) {
             fprintf(stdout, "Notice: Received MC_STATE(Joined) frame did provide an illegal reason code, ignoring reason code\n");
         }
-        if (channel_found->state >= 5 && channel_found->state < 10) {
+        if (channel_found->state >= picoquic_mc_state_join_pending && channel_found->state < picoquic_mc_state_join_confirmed) {
             // client joins after receiving MC_JOIN frame
             fprintf(stdout, "Got MC_STATE(Joined) from client\n");
-            channel_found->state = 8; // "join attempted"
+            channel_found->state = picoquic_mc_state_join_attempted;
         }
-        else if (channel_found->state >=15 && channel_found->state < 25 && channel_found->mc_join_acked) {
+        else if (channel_found->state >= picoquic_mc_state_leave_pending && channel_found->state < picoquic_mc_state_retire_pending && channel_found->mc_join_acked) {
             // Half-illegal behavior: Leave pending or left, but received MC_JOIN in the past
             fprintf(stdout, "Notice: Client joins multicast channel directly after trying to leave or left\n");
-            channel_found->state = 8; // "join attempted"
+            channel_found->state = picoquic_mc_state_join_attempted;
         } 
         else {
             // ignoring MC_STATE frame 
@@ -7194,15 +7194,15 @@ const uint8_t* picoquic_decode_mc_state_frame(picoquic_cnx_t* cnx, const uint8_t
 
     // MC_STATE(Declined Join)
     if (state == picoquic_mc_state_frame_declined_join) {
-        if (channel_found->state >= 5 && channel_found->state < 8) {
+        if (channel_found->state >= picoquic_mc_state_join_pending && channel_found->state < picoquic_mc_state_join_attempted) {
             // client declines join after receiving MC_JOIN frame
             fprintf(stdout, "Got MC_STATE(Declined Join) from client\n");
-            channel_found->state = 20; // "left"
+            channel_found->state = picoquic_mc_state_left; 
         }
-        else if (channel_found->state >= 8 && channel_found->state < 15) {
+        else if (channel_found->state >= picoquic_mc_state_join_attempted && channel_found->state < picoquic_mc_state_leave_pending) {
             // Half-illegal behavior: Client already in Join attempted or join confirmed
             fprintf(stdout, "Notice: Client declined joining multicast channel after confirming join. Let client leave the channel.\n");
-            channel_found->state = 20; // "left"
+            channel_found->state = picoquic_mc_state_left; 
         } 
         else {
             // ignoring MC_STATE frame 
@@ -7212,10 +7212,10 @@ const uint8_t* picoquic_decode_mc_state_frame(picoquic_cnx_t* cnx, const uint8_t
 
     // MC_STATE(Left)
     if (state == picoquic_mc_state_frame_left) {
-        if (channel_found->state >= 5 && channel_found->state < 20) {
+        if (channel_found->state >= 5 && channel_found->state < picoquic_mc_state_left) {
             // client leaves a non-retired channel after join request by server
             fprintf(stdout, "Got MC_STATE(Leave) from client\n");
-            channel_found->state = 20; // "left"
+            channel_found->state = picoquic_mc_state_left; 
         }
         else {
             // ignoring MC_STATE frame 
@@ -7228,10 +7228,10 @@ const uint8_t* picoquic_decode_mc_state_frame(picoquic_cnx_t* cnx, const uint8_t
         if (reason != picoquic_mc_state_reason_requested_by_server) {
             fprintf(stdout, "Notice: Received MC_STATE(Retired) frame did provide an illegal reason code, ignoring reason code\n");
         }
-        if (channel_found->state >= 25 && channel_found->state < 30) {
+        if (channel_found->state >= picoquic_mc_state_retire_pending && channel_found->state < picoquic_mc_state_retired) {
             // client confirms retired channel
             fprintf(stdout, "Got MC_STATE(Retired) from client\n");
-            channel_found->state = 30; // "retired"
+            channel_found->state = picoquic_mc_state_retired;
         }
         else {
             // ignoring MC_STATE frame 

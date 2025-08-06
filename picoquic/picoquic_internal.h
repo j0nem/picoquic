@@ -691,6 +691,9 @@ typedef struct st_picoquic_mc_channel_in_cnx_t {
     uint64_t latest_key_sequence_acked;
 
     // the following is used on client only:
+    picoquic_mc_state_enum state_scheduled;
+    picoquic_mc_state_frame_enum state_frame_scheduled;
+    int state_reason_scheduled;         // reason code for scheduled state frame, could also be different from picoquic_mc_state_reason_enum choices
     int mc_state_acked;                 // At least one MC_STATE frame was acked
     int mc_limits_acked;                // At least one MC_LIMITS frame was acked
     uint64_t latest_state_sequence_acked;

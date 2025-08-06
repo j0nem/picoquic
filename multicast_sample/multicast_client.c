@@ -549,6 +549,11 @@ int multicast_client_callback(picoquic_cnx_t *cnx,
             fprintf(stdout, "app: Connection to the server confirmed.\n");
 
             break;
+        case picoquic_callback_multicast_join_possible:
+            fprintf(stdout, "App: Multicast join possible\n");
+            picoquic_multicast_channel_id_t *ch_id = (picoquic_multicast_channel_id_t *)v_stream_ctx;
+            ret = picoquic_join_mc_channel(cnx, ch_id); // For now, always accept join request by server
+            break;
         default:
             /* unexpected -- just ignore. */
             break;

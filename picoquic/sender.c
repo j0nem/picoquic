@@ -2885,12 +2885,12 @@ uint8_t * picoquic_prepare_multicast_init_frames(picoquic_cnx_t* cnx, picoquic_p
         picoquic_mc_channel_in_cnx_t* ch = cnx->mc_channels[i];
 
         // if in state "announce_scheduled"
-        if (ch->state < 2) {
+        if (ch->state < picoquic_mc_state_announced) {
             uint8_t *bytes_next = picoquic_format_mc_announce_frame(bytes, bytes_max, ch->channel, path_x, more_data);
             if (bytes_next > bytes) {
                 *is_pure_ack = 0;
                 bytes = bytes_next;
-                ch->state = 2; // "announced"
+                ch->state = picoquic_mc_state_announced; 
             }
         }
         
@@ -2909,12 +2909,12 @@ uint8_t * picoquic_prepare_multicast_init_frames(picoquic_cnx_t* cnx, picoquic_p
         }
         
         // Send MC_JOIN frame
-        if (ch->state < 5 && ch->state >= 2 && ch->key_acked > 0 && ch->mc_announce_acked > 0) {
+        if (ch->state < picoquic_mc_state_join_pending && ch->state >= picoquic_mc_state_announced && ch->key_acked > 0 && ch->mc_announce_acked > 0) {
             uint8_t *bytes_next = picoquic_format_mc_join_frame(bytes, bytes_max, ch->channel, cnx, more_data);
             if (bytes_next > bytes) {
                 *is_pure_ack = 0;
                 bytes = bytes_next;
-                ch->state = 5; // "join_pending"
+                ch->state = picoquic_mc_state_join_pending;
             }
         }
     }
@@ -2940,7 +2940,7 @@ uint8_t * picoquic_prepare_multicast_state_frames(picoquic_cnx_t* cnx,
         picoquic_mc_channel_in_cnx_t* ch = cnx->mc_channels[i];
 
         // if in state "join pending" and MC_KEY received -> check if client can join
-        if (ch->state >= 5 && ch->state < 8 && ch->key_available > 0) {
+        if (ch->state >= picoquic_mc_state_join_pending && ch->state < picoquic_mc_state_join_attempted && ch->key_available > 0) {
             nb_channels_join_pending++;
             picoquic_tp_multicast_client_params_t* params = &cnx->local_parameters.multicast_client_params;
 
@@ -2950,22 +2950,35 @@ uint8_t * picoquic_prepare_multicast_state_frames(picoquic_cnx_t* cnx,
                 uint8_t *bytes_next = picoquic_format_mc_state_frame(bytes, bytes_max, ch, more_data,
                     picoquic_frame_type_mc_state_multicast,
                     picoquic_mc_state_frame_declined_join,
-                    picoquic_mc_state_reason_limit_violation);
+                    picoquic_mc_state_reason_property_violation); // TODO MC: If MC_LIMITS is just out of date, use mc_state_reason_unsynchronized_proerties instead
                 if (bytes_next > bytes) {
                     *is_pure_ack = 0;
                     bytes = bytes_next;
-                    ch->state = 20; // "left"
+                    ch->state = picoquic_mc_state_left;
                 }
             } else {
-                // Join possible, sent MC_STATE(JOINED)
+                // Callback to application to decide whether the join should happen or not
+                cnx->callback_fn(cnx, 0, NULL, 0, picoquic_callback_multicast_join_possible, cnx->callback_ctx, &ch->channel->channel_id);
+            }
+            
+            // Send scheduled state frame (e.g. desired by application)
+            if (ch->state_scheduled != 0 && ch->state_frame_scheduled != 0 && ch->state_scheduled != ch->state) {
+                picoquic_frame_type_enum_t ftype = picoquic_frame_type_mc_state_multicast;
+                if (ch->state_reason_scheduled > picoquic_mc_state_reason_limit_violation) {
+                    ftype = picoquic_frame_type_mc_state_application;
+                }
                 uint8_t *bytes_next = picoquic_format_mc_state_frame(bytes, bytes_max, ch, more_data,
-                    picoquic_frame_type_mc_state_multicast,
-                    picoquic_mc_state_frame_joined,
-                    picoquic_mc_state_reason_requested_by_server);
+                    ftype,
+                    ch->state_frame_scheduled,
+                    ch->state_reason_scheduled);
+
                 if (bytes_next > bytes) {
                     *is_pure_ack = 0;
                     bytes = bytes_next;
-                    ch->state = 8; // "join attempted"
+                    ch->state = ch->state_scheduled; 
+                    ch->state_frame_scheduled = 0;
+                    ch->state_reason_scheduled = 0;
+                    ch->state_scheduled = 0;
                 }
             }
         }
