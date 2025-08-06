@@ -1029,6 +1029,19 @@ int picoquic_schedule_mc_announce_and_join(picoquic_cnx_t* cnx, picoquic_multica
     return 0;
 }
 
+int picoquic_join_mc_channel(picoquic_cnx_t* cnx, picoquic_multicast_channel_id_t* ch_id) {
+    picoquic_mc_channel_in_cnx_t* ch_in_cnx = picoquic_find_multicast_channel_in_cnx(ch_id, cnx);
+    if (ch_in_cnx == NULL || ch_in_cnx->state < picoquic_mc_state_join_pending || ch_in_cnx->state >= picoquic_mc_state_retire_pending) {
+        return -1;
+    }
+
+    ch_in_cnx->state_frame_scheduled = picoquic_mc_state_frame_joined;
+    ch_in_cnx->state_scheduled = picoquic_mc_state_join_attempted;
+    ch_in_cnx->state_reason_scheduled = picoquic_mc_state_reason_requested_by_server;
+
+    return 0;
+}
+
 void picoquic_set_default_address_discovery_mode(picoquic_quic_t* quic, int mode)
 {
     if (mode > 0 && mode <= 3) {

@@ -332,7 +332,10 @@ typedef enum {
     picoquic_callback_path_quality_changed, /* Some path quality parameters have changed */
     picoquic_callback_path_address_observed, /* The peer has reported an address for the path */
     picoquic_callback_app_wakeup, /* wakeup timer set by application has expired */
-    picoquic_callback_next_path_allowed /* There are enough path_id and connection ID available for the next path */
+    picoquic_callback_next_path_allowed, /* There are enough path_id and connection ID available for the next path */
+    picoquic_callback_multicast_join_possible, /* MC_JOIN frame has been received and client is able to join */
+    picoquic_callback_multicast_stream_data, /* Stream frame has been received over multicast */
+    picoquic_callback_multicast_datagram, /* Datagram frame has been received over multicast */
 } picoquic_call_back_event_t;
 
 typedef struct st_picoquic_tp_prefered_address_t {
@@ -735,6 +738,9 @@ int picoquic_create_multicast_channel(picoquic_quic_t* quic, picoquic_multicast_
 
 /* Prepare MC_ANNOUNCE, MC_KEY and MC_JOIN frame and queue sending to client */
 int picoquic_schedule_mc_announce_and_join(picoquic_cnx_t* cnx, picoquic_multicast_channel_t* channel);
+
+/* Send MC_STATE(Joined) to server */
+int picoquic_join_mc_channel(picoquic_cnx_t* cnx, picoquic_multicast_channel_id_t* ch_id);
 
 /* Set the Address Discovery mode for the context */
 void picoquic_set_default_address_discovery_mode(picoquic_quic_t* quic, int mode);
