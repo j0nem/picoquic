@@ -25,6 +25,7 @@
 #include "picoquic_utils.h"
 #include "picoquic_unified_log.h"
 #include "tls_api.h"
+#include "multicast.h"
 #include <stdlib.h>
 #include <string.h>
 #ifndef _WINDOWS
@@ -1031,13 +1032,17 @@ int picoquic_schedule_mc_announce_and_join(picoquic_cnx_t* cnx, picoquic_multica
 
 int picoquic_join_mc_channel(picoquic_cnx_t* cnx, picoquic_multicast_channel_id_t* ch_id) {
     picoquic_mc_channel_in_cnx_t* ch_in_cnx = picoquic_find_multicast_channel_in_cnx(ch_id, cnx);
-    if (ch_in_cnx == NULL || ch_in_cnx->state < picoquic_mc_state_join_pending || ch_in_cnx->state >= picoquic_mc_state_retire_pending) {
+    if (ch_in_cnx == NULL || ch_in_cnx->state < picoquic_mc_state_join_pending || ch_in_cnx->state >= picoquic_mc_state_join_confirmed) {
         return -1;
     }
 
     ch_in_cnx->state_frame_scheduled = picoquic_mc_state_frame_joined;
     ch_in_cnx->state_scheduled = picoquic_mc_state_join_attempted;
     ch_in_cnx->state_reason_scheduled = picoquic_mc_state_reason_requested_by_server;
+
+    struct mcrx_ctx* ctx = NULL;
+    int test = picoquic_mcrx_initialize(ctx);
+    fprintf(stdout, "TEST MCRX RES: %i\n", test);
 
     return 0;
 }

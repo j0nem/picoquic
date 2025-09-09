@@ -30,6 +30,7 @@
 #include "picosplay.h"
 #include "picoquic.h"
 #include "picoquic_utils.h"
+#include <mcrx/libmcrx.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -669,7 +670,7 @@ typedef enum {
     picoqic_mc_state_error = 99
 } picoquic_mc_state_enum;
 
-typedef struct st_picoquic_mc_channel_in_cnx_t {
+typedef struct st_picoquic_mc_channel_in_cnx_t { // TODO MC: Maybe add pointer back to cnx here for convenience?
     picoquic_multicast_channel_t* channel;
     picoquic_mc_state_enum state;
     int key_available;
@@ -678,6 +679,7 @@ typedef struct st_picoquic_mc_channel_in_cnx_t {
     uint64_t latest_key_sequence_available;
     uint64_t latest_state_sequence_available;
     uint64_t latest_limits_sequence_available;
+    struct mcrx_subscription* mcrx_subscription;
     
     // TODO MC: Find solution for sequence numbers starting from 0, but default value for these fields is also 0
     //          Things like "key_available", "key acked", "mc_limits_acked", "mc_state_acked" could be omitted then
@@ -699,6 +701,12 @@ typedef struct st_picoquic_mc_channel_in_cnx_t {
     uint64_t latest_state_sequence_acked;
     uint64_t latest_limits_sequence_acked;
 } picoquic_mc_channel_in_cnx_t;
+
+/* Additional user-data stored in mcrx subscription context */
+typedef struct st_picoquic_mcrx_sub_info {
+  int nb_packets;
+  picoquic_mc_channel_in_cnx_t* ch_in_cnx;
+} picoquic_mcrx_sub_info;
 
 /* QUIC context, defining the tables of connections,
  * open sockets, etc.
