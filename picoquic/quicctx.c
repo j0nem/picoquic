@@ -1040,10 +1040,20 @@ int picoquic_join_mc_channel(picoquic_cnx_t* cnx, picoquic_multicast_channel_id_
     ch_in_cnx->state_scheduled = picoquic_mc_state_join_attempted;
     ch_in_cnx->state_reason_scheduled = picoquic_mc_state_reason_requested_by_server;
 
-    struct mcrx_ctx* ctx = NULL;
-    int test = picoquic_mcrx_initialize(ctx);
-    fprintf(stdout, "TEST MCRX RES: %i\n", test);
+    struct mcrx_ctx *ctx = NULL;
+    int err = picoquic_mcrx_initialize(&ctx);
+    if (err != 0) {
+        fprintf(stdout, "Error while initializing mcrx_ctx: %i", err);
+        return -1;
+    }
 
+    err = picoquic_mcrx_join(&ctx, ch_in_cnx);
+    if (err != 0) {
+        fprintf(stdout, "Error while joining with mcrx_ctx: %i", err);
+        return -1;
+    }
+
+    fprintf(stdout, "Joined multicast channel via mcrx\n");
     return 0;
 }
 

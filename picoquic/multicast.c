@@ -34,6 +34,7 @@
 #endif
 
 /* Call custom do_receive callback function OR mcrx_ctx_receive_packets to receive packets */
+// TODO MC: is this function actually needed? Probably only if mcrx_ctx_set_receive_socket_handlers method does not work
 int picoquic_mcrx_receive_packets(struct mcrx_ctx *ctx, 
     int (*do_receive)(intptr_t handle, int fd), 
     intptr_t* do_handle_val,
@@ -65,9 +66,10 @@ int picoquic_mcrx_added_socket_cb(struct mcrx_ctx* ctx,
     int fd,
     int (*do_receive)(intptr_t handle, int fd)) 
 {
-    // TODO MC: Do somthing here?
+    // TODO MC: Add socket to picoquic_quic context, so that it is included in picoquic_packet_loop_select's select() statement
 
-    // do_receive call maybe not needed (see jake's comment on python-asyncio-taps)
+    // do_receive call maybe not needed?
+    // TODO MC: Figure out how to use the do_receive callback
     do_receive(handle, fd);
     return MCRX_ERR_OK;
 }
@@ -77,30 +79,38 @@ int picoquic_mcrx_removed_socket_cb(
     struct mcrx_ctx* ctx,
     int fd)
 {
-    // TODO MC: Do something here?
+    // TODO MC: Remove socket to picoquic_quic context, so that it is excluded from picoquic_packet_loop_select's select() statement
 
     return MCRX_ERR_OK;
 }
 
 /* Initialize MCRX context and set receive socket handlers */
-int picoquic_mcrx_initialize(struct mcrx_ctx *ctx) 
+int picoquic_mcrx_initialize(struct mcrx_ctx **ctxp) 
 {
-    if (ctx != NULL) {
+    if (*ctxp != NULL) {
+        fprintf(stdout, "Error in picoquic_mcrx_initialize: ctx already created\n");
         return -1;
     }
-    int err = mcrx_ctx_new(&ctx);
-    if (err != 0) {
+    int err = mcrx_ctx_new(ctxp);
+    if (err != 0)  {
+        fprintf(stdout, "Error in picoquic_mcrx_initialize: ctx object could not be created\n");
         return -1;
     }
 
+    struct mcrx_ctx *ctx = *ctxp;
+
     mcrx_ctx_set_log_priority(ctx, MCRX_LOGLEVEL_WARNING);
+    
     
     err = mcrx_ctx_set_receive_socket_handlers(ctx,
         picoquic_mcrx_added_socket_cb, picoquic_mcrx_removed_socket_cb);
-    
+
+    // TODO MC: Maybe add picoquic_quic context to mcrx_ctx userdata for socket add/remove callbacks
+        
     if (err != 0) {
         ctx = mcrx_ctx_unref(ctx);
-        return -1;
+        fprintf(stdout, "Error in picoquic_mcrx_initialize: mcrx_ctx_set_receive_socket_handlers returned error\n");
+        return err;
     }
 
     return 0;
@@ -115,33 +125,40 @@ int picoquic_mcrx_receive_cb(struct mcrx_packet* pkt) {
     uint8_t* data = 0;
     int len = mcrx_packet_get_contents(pkt, &data);
 
-    // TODO MC: Call function to handle incoming data here
-    // int err = handle_data(info->conn, len, data);
-    // if (err != 0) {
-    //     return MCRX_ERR_CALLBACK_FAILED;
-    // }
+    // TODO MC: Figure out how to use this callback (if it is actually called in our setup), maybe call something like `picoquic_incoming_packet_ex` here
 
     return MCRX_RECEIVE_CONTINUE;
 }
 
 /* Join the channel via mcrx */
-int picoquic_mcrx_join(struct mcrx_ctx *ctx, picoquic_mc_channel_in_cnx_t *ch_in_cnx) 
+int picoquic_mcrx_join(struct mcrx_ctx **ctxp, picoquic_mc_channel_in_cnx_t *ch_in_cnx) 
 {
+    struct mcrx_ctx *ctx = *ctxp;
+
     if (ctx == NULL) {
+        fprintf(stdout, "Error in picoquic_mcrx_join: ctx is NULL\n");
         return -1;
     }
 
-    char src_ip[128];
+    char src_ip[128 + 5];
     struct sockaddr* source = (struct sockaddr*) &ch_in_cnx->channel->source_ip;
     picoquic_addr_text(source, src_ip, sizeof(src_ip));
+    strcpy(src_ip, strtok(src_ip, ":"));
 
-    char group_ip[128];
+    char group_ip[128 + 5];
     struct sockaddr* group = (struct sockaddr*) &ch_in_cnx->channel->group_ip;
     picoquic_addr_text(group, group_ip, sizeof(group_ip));
+    strcpy(group_ip, strtok(group_ip, ":"));
 
     int err = 0;
     struct mcrx_subscription_config cfg = MCRX_SUBSCRIPTION_CONFIG_INIT;
     err = mcrx_subscription_config_pton(&cfg, src_ip, group_ip);
+
+    if (err != 0) {
+        fprintf(stdout, "Error in picoquic_mcrx_join while configuring mcrx_subscription: %i\n", err);
+        
+        return -1;
+    }
 
     uint16_t port;
     if (group->sa_family == AF_INET) {
@@ -155,12 +172,14 @@ int picoquic_mcrx_join(struct mcrx_ctx *ctx, picoquic_mc_channel_in_cnx_t *ch_in
     struct mcrx_subscription* sub = 0;
     err = mcrx_subscription_new(ctx, &cfg, &sub);
     if (err != 0) {
+        fprintf(stdout, "Error in picoquic_mcrx_join: subscription object could not be established\n");
         return -1;
     }
 
     picoquic_mcrx_sub_info* subinfo = (picoquic_mcrx_sub_info*)calloc(sizeof(picoquic_mcrx_sub_info), 1);
     if (!subinfo) {
         mcrx_subscription_unref(sub);
+        fprintf(stdout, "Error picoquic_mcrx_join: subinfo could not be alloced\n");
         return -1;
     }
 
@@ -175,6 +194,7 @@ int picoquic_mcrx_join(struct mcrx_ctx *ctx, picoquic_mc_channel_in_cnx_t *ch_in
     if (err != 0) {
         mcrx_subscription_unref(sub);
         free(subinfo);
+        fprintf(stdout, "Error in picoquic_mcrx_join: could not join with subscription object\n");
         return -1;
     }
 
@@ -182,7 +202,8 @@ int picoquic_mcrx_join(struct mcrx_ctx *ctx, picoquic_mc_channel_in_cnx_t *ch_in
 }
 
 /* Unref mcrx context object (and more, if necessary) */
-int picoquic_mcrx_cleanup(struct mcrx_ctx* ctx) {
+int picoquic_mcrx_cleanup(struct mcrx_ctx **ctxp) {
+    struct mcrx_ctx *ctx = *ctxp;
     if (ctx == NULL) {
         return -1;
     }
