@@ -33,6 +33,17 @@
 #include <errno.h>
 #endif
 
+/* Additional user-data stored in mcrx subscription context */
+struct picoquic_mcrx_sub_info {
+  int nb_packets;
+  picoquic_mc_channel_in_cnx_t* ch_in_cnx;
+};
+
+/* Additional user-data stored in mcrx subscription context */
+struct picoquic_mcrx_ctx_info {
+  picoquic_quic_t* quic;
+};
+
 /* Call custom do_receive callback function OR mcrx_ctx_receive_packets to receive packets */
 // TODO MC: is this function actually needed? Probably only if mcrx_ctx_set_receive_socket_handlers method does not work
 int picoquic_mcrx_receive_packets(struct mcrx_ctx *ctx, 
@@ -62,15 +73,25 @@ int picoquic_mcrx_receive_packets(struct mcrx_ctx *ctx,
 
 /* Callback called by mcrx when socket was added */
 int picoquic_mcrx_added_socket_cb(struct mcrx_ctx* ctx,
-    intptr_t handle,
+    intptr_t sub,
     int fd,
     int (*do_receive)(intptr_t handle, int fd)) 
 {
-    // TODO MC: Add socket to picoquic_quic context, so that it is included in picoquic_packet_loop_select's select() statement
+    // Add socket to picoquic_quic context, so that it is included in picoquic_packet_loop_select's select() statement
+    struct picoquic_mcrx_ctx_info* info = (struct picoquic_mcrx_ctx_info*)mcrx_ctx_get_userdata(ctx);
+    picoquic_quic_t* quicctx = info->quic;
+
+    if (quicctx->nb_multicast_fds >= PICOQUIC_MAX_MC_SOCKETS) {
+        fprintf(stdout, "Error: Could not add multicast socket to quic ctx, number of possible multicast sockets exceeded (%i)\n", PICOQUIC_MAX_MC_SOCKETS);
+        return -1;
+    }
+
+    quicctx->multicast_fds[quicctx->nb_multicast_fds] = fd;
+    quicctx->nb_multicast_fds++;
 
     // do_receive call maybe not needed?
     // TODO MC: Figure out how to use the do_receive callback
-    do_receive(handle, fd);
+    do_receive(sub, fd);
     return MCRX_ERR_OK;
 }
 
@@ -79,13 +100,36 @@ int picoquic_mcrx_removed_socket_cb(
     struct mcrx_ctx* ctx,
     int fd)
 {
-    // TODO MC: Remove socket to picoquic_quic context, so that it is excluded from picoquic_packet_loop_select's select() statement
+    // Remove socket to picoquic_quic context, so that it is excluded from picoquic_packet_loop_select's select() statement
+    struct picoquic_mcrx_ctx_info* info = (struct picoquic_mcrx_ctx_info*)mcrx_ctx_get_userdata(ctx);
+    picoquic_quic_t* quicctx = info->quic;
+    int found = 0;
+
+    for (int i = 0; i < PICOQUIC_MAX_MC_SOCKETS; i++) {
+        if (quicctx->multicast_fds[i] == fd) {
+            found = 1;
+            quicctx->multicast_fds[i] = 0;
+            if (i < PICOQUIC_MAX_MC_SOCKETS - 1) {
+                for (int j = i; j < PICOQUIC_MAX_MC_SOCKETS - 1; j++) {
+                    quicctx->multicast_fds[j] = quicctx->multicast_fds[j + 1];
+                }
+            }
+        }
+    }
+
+    if (found) {
+        quicctx->nb_multicast_fds--;
+    } else {
+        fprintf(stdout, "Info: Socket to be removed from quic ctx not found in quic ctx\n");
+    }
+
+    fprintf(stdout, "Debug: mcrx_removed_socket_cb called\n");
 
     return MCRX_ERR_OK;
 }
 
 /* Initialize MCRX context and set receive socket handlers */
-int picoquic_mcrx_initialize(struct mcrx_ctx **ctxp) 
+int picoquic_mcrx_initialize(struct mcrx_ctx **ctxp, picoquic_quic_t* quicctx) 
 {
     if (*ctxp != NULL) {
         fprintf(stdout, "Error in picoquic_mcrx_initialize: ctx already created\n");
@@ -98,9 +142,16 @@ int picoquic_mcrx_initialize(struct mcrx_ctx **ctxp)
     }
 
     struct mcrx_ctx *ctx = *ctxp;
+    struct picoquic_mcrx_ctx_info* info = (struct picoquic_mcrx_ctx_info*)calloc(1, sizeof(struct picoquic_mcrx_ctx_info));
+    if (!info) {
+        ctx = mcrx_ctx_unref(ctx);
+        return -1;
+    }
 
+    info->quic = quicctx;
+
+    mcrx_ctx_set_userdata(ctx, (intptr_t)info);
     mcrx_ctx_set_log_priority(ctx, MCRX_LOGLEVEL_WARNING);
-    
     
     err = mcrx_ctx_set_receive_socket_handlers(ctx,
         picoquic_mcrx_added_socket_cb, picoquic_mcrx_removed_socket_cb);
@@ -119,11 +170,13 @@ int picoquic_mcrx_initialize(struct mcrx_ctx **ctxp)
 /* Callback called by mcrx to handle received packets */
 int picoquic_mcrx_receive_cb(struct mcrx_packet* pkt) {
     struct mcrx_subscription* sub = mcrx_packet_get_subscription(pkt);
-    picoquic_mcrx_sub_info* info = (picoquic_mcrx_sub_info*)mcrx_subscription_get_userdata(sub);
+    struct picoquic_mcrx_sub_info* info = (struct picoquic_mcrx_sub_info*)mcrx_subscription_get_userdata(sub);
 
     info->nb_packets++;
     uint8_t* data = 0;
     int len = mcrx_packet_get_contents(pkt, &data);
+
+    fprintf(stdout, "picoquic_mcrx_receive_cb called!\n");
 
     // TODO MC: Figure out how to use this callback (if it is actually called in our setup), maybe call something like `picoquic_incoming_packet_ex` here
 
@@ -176,7 +229,7 @@ int picoquic_mcrx_join(struct mcrx_ctx **ctxp, picoquic_mc_channel_in_cnx_t *ch_
         return -1;
     }
 
-    picoquic_mcrx_sub_info* subinfo = (picoquic_mcrx_sub_info*)calloc(sizeof(picoquic_mcrx_sub_info), 1);
+    struct picoquic_mcrx_sub_info* subinfo = (struct picoquic_mcrx_sub_info*)calloc(1, sizeof(struct picoquic_mcrx_sub_info));
     if (!subinfo) {
         mcrx_subscription_unref(sub);
         fprintf(stdout, "Error picoquic_mcrx_join: subinfo could not be alloced\n");
@@ -207,13 +260,18 @@ int picoquic_mcrx_cleanup(struct mcrx_ctx **ctxp) {
     if (ctx == NULL) {
         return -1;
     }
+    struct picoquic_mcrx_ctx_info* info = (struct picoquic_mcrx_ctx_info*)mcrx_ctx_get_userdata(ctx);
+    if (info) {
+        mcrx_ctx_set_userdata(ctx, 0);
+        free(info);
+    }
     mcrx_ctx_unref(ctx);
     return 0;
 }
 
 /* Leave channel via mcrx */
 int picoquic_mcrx_leave(struct mcrx_subscription* sub) {
-    picoquic_mcrx_sub_info* info = (picoquic_mcrx_sub_info*)mcrx_subscription_get_userdata(sub);
+    struct picoquic_mcrx_sub_info* info = (struct picoquic_mcrx_sub_info*)mcrx_subscription_get_userdata(sub);
     mcrx_subscription_set_userdata(sub, 0);
 
     if (info) {

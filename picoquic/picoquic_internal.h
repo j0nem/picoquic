@@ -35,6 +35,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+#include "picosocks.h"
 
 #ifndef PICOQUIC_MAX_PACKET_SIZE
 #define PICOQUIC_MAX_PACKET_SIZE 1536
@@ -702,11 +703,7 @@ typedef struct st_picoquic_mc_channel_in_cnx_t { // TODO MC: Maybe add pointer b
     uint64_t latest_limits_sequence_acked;
 } picoquic_mc_channel_in_cnx_t;
 
-/* Additional user-data stored in mcrx subscription context */
-typedef struct st_picoquic_mcrx_sub_info {
-  int nb_packets;
-  picoquic_mc_channel_in_cnx_t* ch_in_cnx;
-} picoquic_mcrx_sub_info;
+#define PICOQUIC_MAX_MC_SOCKETS 2
 
 /* QUIC context, defining the tables of connections,
  * open sockets, etc.
@@ -849,6 +846,9 @@ typedef struct st_picoquic_quic_t {
     /* Multicast */
     picoquic_multicast_channel_t ** mc_channels;
     int nb_mc_channels;
+    // TODO MC: Move the multicast fd infos to the picoquic_mc_channel struct and also add a field for the socket port (local receive/send port) there
+    SOCKET_TYPE multicast_fds[PICOQUIC_MAX_MC_SOCKETS]; 
+    int nb_multicast_fds;
 
 #ifdef BBRExperiment
     bbr_exp bbr_exp_flags;

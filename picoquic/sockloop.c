@@ -583,7 +583,8 @@ int picoquic_packet_loop_select(picoquic_socket_ctx_t* s_ctx,
     int64_t delta_t,
     int * is_wake_up_event,
     picoquic_network_thread_ctx_t * thread_ctx,
-    int * socket_rank)
+    int * socket_rank,
+    SOCKET_TYPE* multicast_sockets, int nb_multicast_sockets)
 {
     fd_set readfds;
     struct timeval tv;
@@ -602,6 +603,13 @@ int picoquic_packet_loop_select(picoquic_socket_ctx_t* s_ctx,
             sockmax = (int)s_ctx[i].fd;
         }
         FD_SET(s_ctx[i].fd, &readfds);
+    }
+
+    for (int i = 0; i < nb_multicast_sockets; i++) {
+        if (sockmax < (int)multicast_sockets[i]) {
+            sockmax = (int)multicast_sockets[i];
+        }
+        FD_SET(multicast_sockets[i], &readfds);
     }
 
     *is_wake_up_event = 0;
@@ -660,6 +668,9 @@ int picoquic_packet_loop_select(picoquic_socket_ctx_t* s_ctx,
                         break;
                     }
                     else {
+                        char dest_txt[128];
+                        picoquic_addr_text(addr_dest, dest_txt, 128);
+                        fprintf(stdout, "Received data on unicast port, dest: %s\n", dest_txt);
                         /* Document incoming port */
                         if (addr_dest->ss_family == AF_INET6) {
                             ((struct sockaddr_in6*)addr_dest)->sin6_port = s_ctx[i].n_port;
@@ -667,6 +678,34 @@ int picoquic_packet_loop_select(picoquic_socket_ctx_t* s_ctx,
                         else if (addr_dest->ss_family == AF_INET) {
                             ((struct sockaddr_in*)addr_dest)->sin_port = s_ctx[i].n_port;
                         }
+                        break;
+                    }
+                }
+            }
+            for (int i = 0; i < nb_multicast_sockets; i++) {
+                if (FD_ISSET(multicast_sockets[i], &readfds)) {
+                    *socket_rank = i;
+                    bytes_recv = picoquic_recvmsg(multicast_sockets[i], addr_from,
+                        addr_dest, dest_if, received_ecn,
+                        buffer, buffer_max);
+
+                    if (bytes_recv <= 0) {
+                        DBG_PRINTF("Could not receive packet on UDP socket[%d]= %d!\n",
+                            i, (int)multicast_sockets[i]);
+                        break;
+                    }
+                    else {
+                        char dest_txt[128];
+                        picoquic_addr_text(addr_dest, dest_txt, 128);
+                        fprintf(stdout, "Received data on multicast port, dest: %s\n", dest_txt);
+                        // TODO MC: Document port in addr_dest somewhere in the context - so that we know, it is a multicast port
+                        // /* Document incoming port */
+                        // if (addr_dest->ss_family == AF_INET6) {
+                        //     ((struct sockaddr_in6*)addr_dest)->sin6_port;
+                        // }
+                        // else if (addr_dest->ss_family == AF_INET) {
+                        //     ((struct sockaddr_in*)addr_dest)->sin_port = s_ctx[i].n_port;
+                        // }
                         break;
                     }
                 }
@@ -743,6 +782,9 @@ void* picoquic_packet_loop_v3(void* v_ctx)
     picoquic_packet_loop_options_t options = { 0 };
     packet_loop_system_call_duration_t sc_duration = { 0 };
 
+    SOCKET_TYPE watch_multicast_fds[PICOQUIC_MAX_MC_SOCKETS];
+    int nb_multicast_fds = 0;
+
     int is_wake_up_event;
 #ifdef _WINDOWS
     WSADATA wsaData = { 0 };
@@ -800,6 +842,7 @@ void* picoquic_packet_loop_v3(void* v_ctx)
     /* Wait for packets */
     /* TODO: add stopping condition, was && (!just_once || !connection_done) */
     /* Actually, no, rely on the callback return code for that? */
+    // TODO MC: Check closing condition for usage with multicast
     while (ret == 0 && !thread_ctx->thread_should_close) {
         int socket_rank = -1;
         int64_t delta_t = 0;
@@ -845,12 +888,18 @@ void* picoquic_packet_loop_v3(void* v_ctx)
         bytes_recv = picoquic_packet_loop_wait(s_ctx, nb_sockets_available,
             &addr_from, &addr_to, &if_index_to, &received_ecn, &received_buffer,
             delta_t, &is_wake_up_event, thread_ctx, &socket_rank);
-#else
+#else        
+        if (quic->nb_multicast_fds != nb_multicast_fds) {
+            memcpy(watch_multicast_fds, quic->multicast_fds, sizeof(quic->multicast_fds));
+            nb_multicast_fds = quic->nb_multicast_fds;
+            fprintf(stdout, "Number of multicast fds changed: %i (before: %i)\n", nb_multicast_fds, quic->nb_multicast_fds);
+        }
+
         bytes_recv = picoquic_packet_loop_select(s_ctx, nb_sockets_available,
             &addr_from,
             &addr_to, &if_index_to, &received_ecn,
             buffer, sizeof(buffer),
-            delta_t, &is_wake_up_event, thread_ctx, &socket_rank);
+            delta_t, &is_wake_up_event, thread_ctx, &socket_rank, watch_multicast_fds, nb_multicast_fds);
         received_buffer = buffer;
 #endif
         current_time = picoquic_current_time();
@@ -936,7 +985,7 @@ void* picoquic_packet_loop_v3(void* v_ctx)
             /* We limit the number of packets sent in a loop, no make sure that
             * the code will not spend a lot of time sending packets while
             * packets may be adding in the receive queue.
-             */
+            */
 
             while (ret == 0 && nb_packets_sent < PICOQUIC_PACKET_LOOP_SEND_MAX) {
                 struct sockaddr_storage peer_addr;

@@ -2343,6 +2343,10 @@ int picoquic_incoming_segment(
     picoquic_connection_id_t* previous_dest_id,
     picoquic_cnx_t** first_cnx)
 {
+    // TODO MC: Check if addr_to has most-significant bit pattern "1110" (224.0.0.0/4) -> multicast traffic
+    // For ipv6, it's the prefix ff00::/8 (MSBs: "11111111")
+    // In that case, we need special decryption with multicast keys, etc.
+
     int ret = 0;
     picoquic_cnx_t* cnx = NULL;
     picoquic_packet_header ph;
