@@ -25,6 +25,7 @@
 #include "picoquic_utils.h"
 #include "picoquic_unified_log.h"
 #include "tls_api.h"
+#include "multicast.h"
 #include <stdlib.h>
 #include <string.h>
 #ifndef _WINDOWS
@@ -1031,13 +1032,39 @@ int picoquic_schedule_mc_announce_and_join(picoquic_cnx_t* cnx, picoquic_multica
 
 int picoquic_join_mc_channel(picoquic_cnx_t* cnx, picoquic_multicast_channel_id_t* ch_id) {
     picoquic_mc_channel_in_cnx_t* ch_in_cnx = picoquic_find_multicast_channel_in_cnx(ch_id, cnx);
-    if (ch_in_cnx == NULL || ch_in_cnx->state < picoquic_mc_state_join_pending || ch_in_cnx->state >= picoquic_mc_state_retire_pending) {
+    if (ch_in_cnx == NULL || ch_in_cnx->state < picoquic_mc_state_join_pending || ch_in_cnx->state >= picoquic_mc_state_join_confirmed) {
         return -1;
     }
 
-    ch_in_cnx->state_frame_scheduled = picoquic_mc_state_frame_joined;
-    ch_in_cnx->state_scheduled = picoquic_mc_state_join_attempted;
-    ch_in_cnx->state_reason_scheduled = picoquic_mc_state_reason_requested_by_server;
+    int ret = 0;
+
+    struct mcrx_ctx *ctx = NULL;
+    int err = picoquic_mcrx_initialize(&ctx, ch_in_cnx->channel);
+    if (err != 0) {
+        fprintf(stdout, "Error while initializing mcrx_ctx: %i\n", err);
+        ret = -1;
+    }
+    if (ret == 0) {
+        err = picoquic_mcrx_join(&ctx, ch_in_cnx);
+        if (err != 0) {
+            fprintf(stdout, "Error while joining with mcrx_ctx: %i\n", err);
+            ret = -1;
+        }
+    }
+    
+    if (ret != 0) {
+        ch_in_cnx->state_frame_scheduled = picoquic_mc_state_frame_declined_join;
+        ch_in_cnx->state_scheduled = picoquic_mc_state_left;
+        ch_in_cnx->state_reason_scheduled = picoquic_mc_state_reason_limit_violation;
+        fprintf(stdout, "Multicast join failed\n");
+
+    } else {
+        ch_in_cnx->state_frame_scheduled = picoquic_mc_state_frame_joined;
+        ch_in_cnx->state_scheduled = picoquic_mc_state_join_attempted;
+        ch_in_cnx->state_reason_scheduled = picoquic_mc_state_reason_requested_by_server;
+        fprintf(stdout, "Joined multicast channel via mcrx\n");
+    }
+    
 
     return 0;
 }

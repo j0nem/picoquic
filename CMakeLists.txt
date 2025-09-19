@@ -402,19 +402,25 @@ if (BUILD_DEMO)
 endif()
 
 if (BUILD_MULTICAST)
+    find_library(LIBMCRX_LIBRARY NAMES libmcrx.a PATHS /usr/lib /usr/local/lib)
+    find_path(LIBMCRX_INCLUDE_DIR NAMES libmcrx.h PATHS /usr/include /usr/local/include)
     add_executable(multicast
         multicast_sample/multicast.c
         multicast_sample/multicast_server.c
         multicast_sample/multicast_client.c
-        multicast_sample/multicast_background.c)
+        multicast_sample/multicast_background.c
+        picoquic/multicast.c)
     target_link_libraries(multicast
         PUBLIC
             ${PTLS_LIBRARIES}
             ${OPENSSL_LIBRARIES}
             ${MBEDTLS_LIBRARIES}
+            ${LIBMCRX_LIBRARY}
             picoquic-log
             picoquic-core
             picohttp-core)
+    target_include_directories(multicast PRIVATE ${LIBMCRX_INCLUDE_DIR})
+    message(STATUS "LIBMCRX_LIBRARY = ${LIBMCRX_LIBRARY}")
     set_picoquic_compile_settings(multicast)
 endif()
 

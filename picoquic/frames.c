@@ -6214,6 +6214,7 @@ picoquic_mc_channel_in_cnx_t* picoquic_add_channel_to_cnx(picoquic_cnx_t* cnx, p
         return NULL;
     }
 
+    // Add channel to cnx struct
     picoquic_mc_channel_in_cnx_t** new_channel_list = (picoquic_mc_channel_in_cnx_t **)malloc((cnx->nb_mc_channels + 1) * sizeof(picoquic_mc_channel_in_cnx_t *));
 
     if (new_channel_list == NULL) { 
@@ -6221,7 +6222,7 @@ picoquic_mc_channel_in_cnx_t* picoquic_add_channel_to_cnx(picoquic_cnx_t* cnx, p
     }
 
     if (cnx->mc_channels != NULL) {
-        memset(new_channel_list, 0, sizeof(picoquic_mc_channel_in_cnx_t*));
+        memset(new_channel_list, 0, (cnx->nb_mc_channels + 1) * sizeof(picoquic_mc_channel_in_cnx_t*));
         if (cnx->nb_mc_channels > 0) {
             memcpy(new_channel_list, cnx->mc_channels, cnx->nb_mc_channels * sizeof(picoquic_mc_channel_in_cnx_t *));
         }
@@ -6234,6 +6235,37 @@ picoquic_mc_channel_in_cnx_t* picoquic_add_channel_to_cnx(picoquic_cnx_t* cnx, p
     new_channel_in_cnx->channel = channel;
     cnx->mc_channels[cnx->nb_mc_channels] = new_channel_in_cnx;
     cnx->nb_mc_channels++;
+
+    // Add channel to quic struct if not available
+    picoquic_quic_t* quic = cnx->quic;
+    int found = 0;
+    for (int i = 0; i < quic->nb_mc_channels; i++) {
+        if (quic->mc_channels[i] == channel) {
+            found = 1;
+        }
+    }
+
+    if (found > 0) {
+        return new_channel_in_cnx;
+    }
+
+    picoquic_multicast_channel_t** new_q_channel_list = (picoquic_multicast_channel_t **)malloc((quic->nb_mc_channels + 1) * sizeof(picoquic_multicast_channel_t *));
+
+    if (new_q_channel_list == NULL) { 
+        return NULL;
+    }
+
+    if (quic->mc_channels != NULL) {
+        memset(new_q_channel_list, 0, (quic->nb_mc_channels + 1) * sizeof(picoquic_multicast_channel_t*));
+        if (quic->nb_mc_channels > 0) {
+            memcpy(new_q_channel_list, quic->mc_channels, quic->nb_mc_channels * sizeof(picoquic_multicast_channel_t *));
+        }
+        free(quic->mc_channels);
+    }
+    quic->mc_channels = new_q_channel_list;
+
+    quic->mc_channels[quic->nb_mc_channels] = channel;
+    quic->nb_mc_channels++;
 
     return new_channel_in_cnx;
 }
@@ -6398,6 +6430,7 @@ const uint8_t* picoquic_decode_mc_announce_frame(picoquic_cnx_t* cnx, const uint
         }
 
         channel->channel_id = channel_id;
+        channel->client_mode = 1;
     }
 
     // if not enough bytes received for two addresses (src and group), then error
@@ -6668,6 +6701,7 @@ const uint8_t* picoquic_decode_mc_key_frame(picoquic_cnx_t* cnx, const uint8_t* 
         }
 
         channel->channel_id = channel_id;
+        channel->client_mode = 1;
     }
 
     picoquic_multicast_aead_secret_t* aead = malloc(sizeof(picoquic_multicast_aead_secret_t));

@@ -583,7 +583,8 @@ int picoquic_packet_loop_select(picoquic_socket_ctx_t* s_ctx,
     int64_t delta_t,
     int * is_wake_up_event,
     picoquic_network_thread_ctx_t * thread_ctx,
-    int * socket_rank)
+    int * socket_rank,
+    picoquic_multicast_channel_t** mc_channels, int nb_mc_channels)
 {
     fd_set readfds;
     struct timeval tv;
@@ -602,6 +603,21 @@ int picoquic_packet_loop_select(picoquic_socket_ctx_t* s_ctx,
             sockmax = (int)s_ctx[i].fd;
         }
         FD_SET(s_ctx[i].fd, &readfds);
+    }
+
+    for (int i = 0; i < nb_mc_channels; i++) {
+        if (mc_channels[i]->client_mode == 0) {
+            continue;
+        }
+
+        int socket_open = mc_channels[i]->socket_open;
+        SOCKET_TYPE fd = mc_channels[i]->fd;
+        if (socket_open > 0) {
+            if (sockmax < (int)fd) {
+                sockmax = (int)fd;
+            }
+            FD_SET(fd, &readfds);
+        }
     }
 
     *is_wake_up_event = 0;
@@ -666,6 +682,36 @@ int picoquic_packet_loop_select(picoquic_socket_ctx_t* s_ctx,
                         }
                         else if (addr_dest->ss_family == AF_INET) {
                             ((struct sockaddr_in*)addr_dest)->sin_port = s_ctx[i].n_port;
+                        }
+                        break;
+                    }
+                }
+            }
+            for (int i = 0; i < nb_mc_channels; i++) {
+                if (mc_channels[i]->client_mode == 0 || mc_channels[i]->socket_open == 0) {
+                    continue;
+                }
+
+                SOCKET_TYPE fd = mc_channels[i]->fd;
+
+                if (FD_ISSET(fd, &readfds)) {
+                    *socket_rank = i;
+                    bytes_recv = picoquic_recvmsg(fd, addr_from,
+                        addr_dest, dest_if, received_ecn,
+                        buffer, buffer_max);
+
+                    if (bytes_recv <= 0) {
+                        DBG_PRINTF("Could not receive packet on UDP socket[%d]= %d!\n",
+                            i, (int)fd);
+                        break;
+                    }
+                    else {
+                        /* Document incoming port */
+                        if (addr_dest->ss_family == AF_INET6) {
+                            mc_channels[i]->local_port = ((struct sockaddr_in6*)addr_dest)->sin6_port;
+                        }
+                        else if (addr_dest->ss_family == AF_INET) {
+                            mc_channels[i]->local_port = ((struct sockaddr_in*)addr_dest)->sin_port;
                         }
                         break;
                     }
@@ -850,7 +896,7 @@ void* picoquic_packet_loop_v3(void* v_ctx)
             &addr_from,
             &addr_to, &if_index_to, &received_ecn,
             buffer, sizeof(buffer),
-            delta_t, &is_wake_up_event, thread_ctx, &socket_rank);
+            delta_t, &is_wake_up_event, thread_ctx, &socket_rank, quic->mc_channels, quic->nb_mc_channels);
         received_buffer = buffer;
 #endif
         current_time = picoquic_current_time();

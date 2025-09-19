@@ -30,10 +30,12 @@
 #include "picosplay.h"
 #include "picoquic.h"
 #include "picoquic_utils.h"
+#include <mcrx/libmcrx.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+#include "picosocks.h"
 
 #ifndef PICOQUIC_MAX_PACKET_SIZE
 #define PICOQUIC_MAX_PACKET_SIZE 1536
@@ -625,6 +627,10 @@ typedef struct st_picoquic_multicast_channel_t {
     uint64_t max_rate;
     uint64_t max_ack_delay;
     int is_retired;
+    int client_mode;     // 0: sending (server), 1: receiving (client)
+    int socket_open;     // bool, if a socket is opened
+    SOCKET_TYPE fd;      // fd of used local socket (client: via mcrx)
+    uint16_t local_port; // port of used local socket (server: sending, client: receiving - via mcrx)
 } picoquic_multicast_channel_t;
 
 // State of a multicast channel in a cnx (with buffers for extensions):
@@ -669,7 +675,7 @@ typedef enum {
     picoqic_mc_state_error = 99
 } picoquic_mc_state_enum;
 
-typedef struct st_picoquic_mc_channel_in_cnx_t {
+typedef struct st_picoquic_mc_channel_in_cnx_t { // TODO MC: Maybe add pointer back to cnx here for convenience?
     picoquic_multicast_channel_t* channel;
     picoquic_mc_state_enum state;
     int key_available;
@@ -678,9 +684,7 @@ typedef struct st_picoquic_mc_channel_in_cnx_t {
     uint64_t latest_key_sequence_available;
     uint64_t latest_state_sequence_available;
     uint64_t latest_limits_sequence_available;
-    
-    // TODO MC: Find solution for sequence numbers starting from 0, but default value for these fields is also 0
-    //          Things like "key_available", "key acked", "mc_limits_acked", "mc_state_acked" could be omitted then
+    struct mcrx_subscription* mcrx_subscription;
 
     // the following is used on server only:
     int mc_announce_acked;
