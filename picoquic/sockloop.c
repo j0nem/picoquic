@@ -846,7 +846,6 @@ void* picoquic_packet_loop_v3(void* v_ctx)
     /* Wait for packets */
     /* TODO: add stopping condition, was && (!just_once || !connection_done) */
     /* Actually, no, rely on the callback return code for that? */
-    // TODO MC: Check closing condition for usage with multicast
     while (ret == 0 && !thread_ctx->thread_should_close) {
         int socket_rank = -1;
         int64_t delta_t = 0;
@@ -892,7 +891,7 @@ void* picoquic_packet_loop_v3(void* v_ctx)
         bytes_recv = picoquic_packet_loop_wait(s_ctx, nb_sockets_available,
             &addr_from, &addr_to, &if_index_to, &received_ecn, &received_buffer,
             delta_t, &is_wake_up_event, thread_ctx, &socket_rank);
-#else        
+#else
         bytes_recv = picoquic_packet_loop_select(s_ctx, nb_sockets_available,
             &addr_from,
             &addr_to, &if_index_to, &received_ecn,
@@ -983,7 +982,7 @@ void* picoquic_packet_loop_v3(void* v_ctx)
             /* We limit the number of packets sent in a loop, no make sure that
             * the code will not spend a lot of time sending packets while
             * packets may be adding in the receive queue.
-            */
+             */
 
             while (ret == 0 && nb_packets_sent < PICOQUIC_PACKET_LOOP_SEND_MAX) {
                 struct sockaddr_storage peer_addr;

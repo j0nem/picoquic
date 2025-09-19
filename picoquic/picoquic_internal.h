@@ -704,8 +704,6 @@ typedef struct st_picoquic_mc_channel_in_cnx_t { // TODO MC: Maybe add pointer b
     uint64_t latest_limits_sequence_acked;
 } picoquic_mc_channel_in_cnx_t;
 
-#define PICOQUIC_MAX_MC_SOCKETS 2
-
 /* QUIC context, defining the tables of connections,
  * open sockets, etc.
  */
