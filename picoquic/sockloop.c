@@ -676,8 +676,6 @@ int picoquic_packet_loop_select(picoquic_socket_ctx_t* s_ctx,
                         break;
                     }
                     else {
-                        char dest_txt[128];
-                        picoquic_addr_text((struct sockaddr*)addr_dest, dest_txt, 128);
                         /* Document incoming port */
                         if (addr_dest->ss_family == AF_INET6) {
                             ((struct sockaddr_in6*)addr_dest)->sin6_port = s_ctx[i].n_port;
@@ -708,9 +706,6 @@ int picoquic_packet_loop_select(picoquic_socket_ctx_t* s_ctx,
                         break;
                     }
                     else {
-                        char dest_txt[128];
-                        picoquic_addr_text((struct sockaddr*)addr_dest, dest_txt, 128);
-                        fprintf(stdout, "Received data on multicast port, dest: %s\n", dest_txt);
                         /* Document incoming port */
                         if (addr_dest->ss_family == AF_INET6) {
                             mc_channels[i]->local_port = ((struct sockaddr_in6*)addr_dest)->sin6_port;

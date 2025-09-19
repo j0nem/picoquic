@@ -2343,10 +2343,6 @@ int picoquic_incoming_segment(
     picoquic_connection_id_t* previous_dest_id,
     picoquic_cnx_t** first_cnx)
 {
-    // TODO MC: Check if addr_to has most-significant bit pattern "1110" (224.0.0.0/4) -> multicast traffic
-    // For ipv6, it's the prefix ff00::/8 (MSBs: "11111111")
-    // In that case, we need special decryption with multicast keys, etc.
-
     int ret = 0;
     picoquic_cnx_t* cnx = NULL;
     picoquic_packet_header ph;
@@ -2357,6 +2353,28 @@ int picoquic_incoming_segment(
     int path_is_not_allocated = 0;
     uint8_t* bytes = NULL;
     picoquic_stream_data_node_t* decrypted_data = picoquic_stream_data_node_alloc(quic);
+    picoquic_multicast_channel_t* multicast_channel = NULL;
+
+    if (quic->nb_mc_channels > 0) {
+        uint16_t port = 0;
+        if (addr_to->sa_family == AF_INET) {
+            port = ((struct sockaddr_in*)addr_to)->sin_port;
+        } 
+        if (addr_to->sa_family == AF_INET6) {
+            port = ((struct sockaddr_in6*)addr_to)->sin6_port;
+        } 
+
+        for (int i = 0; i < quic->nb_mc_channels; i++) {
+            if (quic->mc_channels[i]->local_port == port) {
+                multicast_channel = quic->mc_channels[i];
+                fprintf(stdout, "DEBUG: Detected multicast data from channel: ");
+                print_hex_bytes(multicast_channel->channel_id.id, multicast_channel->channel_id.id_len);
+                fprintf(stdout, "\n");
+            }
+        }
+    }
+
+    // TODO MC: handle multicast data frames, so that they are not skipped
 
     if (decrypted_data == NULL) {
         return -1;
