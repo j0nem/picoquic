@@ -21,7 +21,7 @@
 
 #include <mcrx/libmcrx.h>
 
-int picoquic_mcrx_initialize(struct mcrx_ctx **ctxp, picoquic_quic_t* quicctx);
+int picoquic_mcrx_initialize(struct mcrx_ctx **ctxp, picoquic_multicast_channel_t* channel);
 int picoquic_mcrx_join(struct mcrx_ctx **ctxp, picoquic_mc_channel_in_cnx_t *ch_in_cnx);
 int picoquic_mcrx_receive_packets(struct mcrx_ctx **ctxp, int (*do_receive)(intptr_t handle, int fd), intptr_t* do_handle_val, int fd);
 int picoquic_mcrx_leave(struct mcrx_subscription* sub);

@@ -1039,7 +1039,7 @@ int picoquic_join_mc_channel(picoquic_cnx_t* cnx, picoquic_multicast_channel_id_
     int ret = 0;
 
     struct mcrx_ctx *ctx = NULL;
-    int err = picoquic_mcrx_initialize(&ctx, cnx->quic);
+    int err = picoquic_mcrx_initialize(&ctx, ch_in_cnx->channel);
     if (err != 0) {
         fprintf(stdout, "Error while initializing mcrx_ctx: %i\n", err);
         ret = -1;

@@ -627,6 +627,10 @@ typedef struct st_picoquic_multicast_channel_t {
     uint64_t max_rate;
     uint64_t max_ack_delay;
     int is_retired;
+    int client_mode;     // 0: sending (server), 1: receiving (client)
+    int socket_open;     // bool, if a socket is opened
+    SOCKET_TYPE fd;      // fd of used local socket (client: via mcrx)
+    uint16_t local_port; // port of used local socket (server: sending, client: receiving - via mcrx)
 } picoquic_multicast_channel_t;
 
 // State of a multicast channel in a cnx (with buffers for extensions):
@@ -681,9 +685,6 @@ typedef struct st_picoquic_mc_channel_in_cnx_t { // TODO MC: Maybe add pointer b
     uint64_t latest_state_sequence_available;
     uint64_t latest_limits_sequence_available;
     struct mcrx_subscription* mcrx_subscription;
-    
-    // TODO MC: Find solution for sequence numbers starting from 0, but default value for these fields is also 0
-    //          Things like "key_available", "key acked", "mc_limits_acked", "mc_state_acked" could be omitted then
 
     // the following is used on server only:
     int mc_announce_acked;
@@ -846,9 +847,6 @@ typedef struct st_picoquic_quic_t {
     /* Multicast */
     picoquic_multicast_channel_t ** mc_channels;
     int nb_mc_channels;
-    // TODO MC: Move the multicast fd infos to the picoquic_mc_channel struct and also add a field for the socket port (local receive/send port) there
-    SOCKET_TYPE multicast_fds[PICOQUIC_MAX_MC_SOCKETS]; 
-    int nb_multicast_fds;
 
 #ifdef BBRExperiment
     bbr_exp bbr_exp_flags;

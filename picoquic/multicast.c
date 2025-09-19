@@ -41,7 +41,7 @@ struct picoquic_mcrx_sub_info {
 
 /* Additional user-data stored in mcrx subscription context */
 struct picoquic_mcrx_ctx_info {
-  picoquic_quic_t* quic;
+  picoquic_multicast_channel_t* channel;
 };
 
 /* Call custom do_receive callback function OR mcrx_ctx_receive_packets to receive packets */
@@ -79,15 +79,10 @@ int picoquic_mcrx_added_socket_cb(struct mcrx_ctx* ctx,
 {
     // Add socket to picoquic_quic context, so that it is included in picoquic_packet_loop_select's select() statement
     struct picoquic_mcrx_ctx_info* info = (struct picoquic_mcrx_ctx_info*)mcrx_ctx_get_userdata(ctx);
-    picoquic_quic_t* quicctx = info->quic;
+    picoquic_multicast_channel_t* channel = info->channel;
 
-    if (quicctx->nb_multicast_fds >= PICOQUIC_MAX_MC_SOCKETS) {
-        fprintf(stdout, "Error: Could not add multicast socket to quic ctx, number of possible multicast sockets exceeded (%i)\n", PICOQUIC_MAX_MC_SOCKETS);
-        return -1;
-    }
-
-    quicctx->multicast_fds[quicctx->nb_multicast_fds] = fd;
-    quicctx->nb_multicast_fds++;
+    channel->fd = fd;
+    channel->socket_open = 1;
 
     // do_receive call maybe not needed?
     // TODO MC: Figure out how to use the do_receive callback
@@ -102,34 +97,18 @@ int picoquic_mcrx_removed_socket_cb(
 {
     // Remove socket to picoquic_quic context, so that it is excluded from picoquic_packet_loop_select's select() statement
     struct picoquic_mcrx_ctx_info* info = (struct picoquic_mcrx_ctx_info*)mcrx_ctx_get_userdata(ctx);
-    picoquic_quic_t* quicctx = info->quic;
+    picoquic_multicast_channel_t* channel = info->channel;
     int found = 0;
 
-    for (int i = 0; i < PICOQUIC_MAX_MC_SOCKETS; i++) {
-        if (quicctx->multicast_fds[i] == fd) {
-            found = 1;
-            quicctx->multicast_fds[i] = 0;
-            if (i < PICOQUIC_MAX_MC_SOCKETS - 1) {
-                for (int j = i; j < PICOQUIC_MAX_MC_SOCKETS - 1; j++) {
-                    quicctx->multicast_fds[j] = quicctx->multicast_fds[j + 1];
-                }
-            }
-        }
-    }
-
-    if (found) {
-        quicctx->nb_multicast_fds--;
-    } else {
-        fprintf(stdout, "Info: Socket to be removed from quic ctx not found in quic ctx\n");
-    }
+    channel->fd = 0;
+    channel->socket_open = 0;
 
     fprintf(stdout, "Debug: mcrx_removed_socket_cb called\n");
-
     return MCRX_ERR_OK;
 }
 
 /* Initialize MCRX context and set receive socket handlers */
-int picoquic_mcrx_initialize(struct mcrx_ctx **ctxp, picoquic_quic_t* quicctx) 
+int picoquic_mcrx_initialize(struct mcrx_ctx **ctxp, picoquic_multicast_channel_t* channel) 
 {
     if (*ctxp != NULL) {
         fprintf(stdout, "Error in picoquic_mcrx_initialize: ctx already created\n");
@@ -148,7 +127,7 @@ int picoquic_mcrx_initialize(struct mcrx_ctx **ctxp, picoquic_quic_t* quicctx)
         return -1;
     }
 
-    info->quic = quicctx;
+    info->channel = channel;
 
     mcrx_ctx_set_userdata(ctx, (intptr_t)info);
     mcrx_ctx_set_log_priority(ctx, MCRX_LOGLEVEL_WARNING);

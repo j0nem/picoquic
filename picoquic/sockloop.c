@@ -584,7 +584,7 @@ int picoquic_packet_loop_select(picoquic_socket_ctx_t* s_ctx,
     int * is_wake_up_event,
     picoquic_network_thread_ctx_t * thread_ctx,
     int * socket_rank,
-    SOCKET_TYPE* multicast_sockets, int nb_multicast_sockets)
+    picoquic_multicast_channel_t** mc_channels, int nb_mc_channels)
 {
     fd_set readfds;
     struct timeval tv;
@@ -605,11 +605,19 @@ int picoquic_packet_loop_select(picoquic_socket_ctx_t* s_ctx,
         FD_SET(s_ctx[i].fd, &readfds);
     }
 
-    for (int i = 0; i < nb_multicast_sockets; i++) {
-        if (sockmax < (int)multicast_sockets[i]) {
-            sockmax = (int)multicast_sockets[i];
+    for (int i = 0; i < nb_mc_channels; i++) {
+        if (mc_channels[i]->client_mode == 0) {
+            continue;
         }
-        FD_SET(multicast_sockets[i], &readfds);
+
+        int socket_open = mc_channels[i]->socket_open;
+        SOCKET_TYPE fd = mc_channels[i]->fd;
+        if (socket_open > 0) {
+            if (sockmax < (int)fd) {
+                sockmax = (int)fd;
+            }
+            FD_SET(fd, &readfds);
+        }
     }
 
     *is_wake_up_event = 0;
@@ -669,8 +677,7 @@ int picoquic_packet_loop_select(picoquic_socket_ctx_t* s_ctx,
                     }
                     else {
                         char dest_txt[128];
-                        picoquic_addr_text(addr_dest, dest_txt, 128);
-                        fprintf(stdout, "Received data on unicast port, dest: %s\n", dest_txt);
+                        picoquic_addr_text((struct sockaddr*)addr_dest, dest_txt, 128);
                         /* Document incoming port */
                         if (addr_dest->ss_family == AF_INET6) {
                             ((struct sockaddr_in6*)addr_dest)->sin6_port = s_ctx[i].n_port;
@@ -682,30 +689,35 @@ int picoquic_packet_loop_select(picoquic_socket_ctx_t* s_ctx,
                     }
                 }
             }
-            for (int i = 0; i < nb_multicast_sockets; i++) {
-                if (FD_ISSET(multicast_sockets[i], &readfds)) {
+            for (int i = 0; i < nb_mc_channels; i++) {
+                if (mc_channels[i]->client_mode == 0 || mc_channels[i]->socket_open == 0) {
+                    continue;
+                }
+
+                SOCKET_TYPE fd = mc_channels[i]->fd;
+
+                if (FD_ISSET(fd, &readfds)) {
                     *socket_rank = i;
-                    bytes_recv = picoquic_recvmsg(multicast_sockets[i], addr_from,
+                    bytes_recv = picoquic_recvmsg(fd, addr_from,
                         addr_dest, dest_if, received_ecn,
                         buffer, buffer_max);
 
                     if (bytes_recv <= 0) {
                         DBG_PRINTF("Could not receive packet on UDP socket[%d]= %d!\n",
-                            i, (int)multicast_sockets[i]);
+                            i, (int)fd);
                         break;
                     }
                     else {
                         char dest_txt[128];
-                        picoquic_addr_text(addr_dest, dest_txt, 128);
+                        picoquic_addr_text((struct sockaddr*)addr_dest, dest_txt, 128);
                         fprintf(stdout, "Received data on multicast port, dest: %s\n", dest_txt);
-                        // TODO MC: Document port in addr_dest somewhere in the context - so that we know, it is a multicast port
-                        // /* Document incoming port */
-                        // if (addr_dest->ss_family == AF_INET6) {
-                        //     ((struct sockaddr_in6*)addr_dest)->sin6_port;
-                        // }
-                        // else if (addr_dest->ss_family == AF_INET) {
-                        //     ((struct sockaddr_in*)addr_dest)->sin_port = s_ctx[i].n_port;
-                        // }
+                        /* Document incoming port */
+                        if (addr_dest->ss_family == AF_INET6) {
+                            mc_channels[i]->local_port = ((struct sockaddr_in6*)addr_dest)->sin6_port;
+                        }
+                        else if (addr_dest->ss_family == AF_INET) {
+                            mc_channels[i]->local_port = ((struct sockaddr_in*)addr_dest)->sin_port;
+                        }
                         break;
                     }
                 }
@@ -781,9 +793,6 @@ void* picoquic_packet_loop_v3(void* v_ctx)
     unsigned int nb_loop_immediate = 0;
     picoquic_packet_loop_options_t options = { 0 };
     packet_loop_system_call_duration_t sc_duration = { 0 };
-
-    SOCKET_TYPE watch_multicast_fds[PICOQUIC_MAX_MC_SOCKETS];
-    int nb_multicast_fds = 0;
 
     int is_wake_up_event;
 #ifdef _WINDOWS
@@ -889,17 +898,11 @@ void* picoquic_packet_loop_v3(void* v_ctx)
             &addr_from, &addr_to, &if_index_to, &received_ecn, &received_buffer,
             delta_t, &is_wake_up_event, thread_ctx, &socket_rank);
 #else        
-        if (quic->nb_multicast_fds != nb_multicast_fds) {
-            memcpy(watch_multicast_fds, quic->multicast_fds, sizeof(quic->multicast_fds));
-            nb_multicast_fds = quic->nb_multicast_fds;
-            fprintf(stdout, "Number of multicast fds changed: %i (before: %i)\n", nb_multicast_fds, quic->nb_multicast_fds);
-        }
-
         bytes_recv = picoquic_packet_loop_select(s_ctx, nb_sockets_available,
             &addr_from,
             &addr_to, &if_index_to, &received_ecn,
             buffer, sizeof(buffer),
-            delta_t, &is_wake_up_event, thread_ctx, &socket_rank, watch_multicast_fds, nb_multicast_fds);
+            delta_t, &is_wake_up_event, thread_ctx, &socket_rank, quic->mc_channels, quic->nb_mc_channels);
         received_buffer = buffer;
 #endif
         current_time = picoquic_current_time();
