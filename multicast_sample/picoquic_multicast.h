@@ -42,12 +42,12 @@ extern "C"
 #define PICOQUIC_MULTICAST_CLIENT_IP "127.0.0.1"
 #define PICOQUIC_MULTICAST_CLIENT_PORT 4422
 
-#define PICOQUIC_MULTICAST_NO_ERROR 0
-#define PICOQUIC_MULTICAST_INTERNAL_ERROR 0x101
-#define PICOQUIC_MULTICAST_NAME_TOO_LONG_ERROR 0x102
-#define PICOQUIC_MULTICAST_NO_SUCH_FILE_ERROR 0x103
-#define PICOQUIC_MULTICAST_FILE_READ_ERROR 0x104
-#define PICOQUIC_MULTICAST_FILE_CANCEL_ERROR 0x105
+// #define PICOQUIC_MULTICAST_NO_ERROR 0
+// #define PICOQUIC_MULTICAST_INTERNAL_ERROR 0x101
+// #define PICOQUIC_MULTICAST_NAME_TOO_LONG_ERROR 0x102
+// #define PICOQUIC_MULTICAST_NO_SUCH_FILE_ERROR 0x103
+// #define PICOQUIC_MULTICAST_FILE_READ_ERROR 0x104
+// #define PICOQUIC_MULTICAST_FILE_CANCEL_ERROR 0x105
 
 #define PICOQUIC_MULTICAST_CLIENT_TICKET_STORE "multicast_ticket_store.bin";
 #define PICOQUIC_MULTICAST_CLIENT_TOKEN_STORE "multicast_token_store.bin";
@@ -56,12 +56,11 @@ extern "C"
 
 #define PICOQUIC_MULTICAST_BACKGROUND_MAX_FILES 32
 
-    int picoquic_multicast_client(char const *server_name, int server_port, char const *default_dir,
-                                  int nb_files, char const **file_names);
+    int picoquic_multicast_client(char const *server_name, int server_port, char const *default_dir);
 
-    int picoquic_multicast_background(char const *server_name, int server_port, char const *default_dir);
+    // int picoquic_multicast_background(char const *server_name, int server_port, char const *default_dir);
 
-    int picoquic_multicast_server(int server_port, const char *pem_cert, const char *pem_key, const char *default_dir);
+    int picoquic_multicast_server(int server_port, const char *pem_cert, const char *pem_key, const char *served_file);
 
 #ifdef __cplusplus
 }

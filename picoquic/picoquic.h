@@ -333,9 +333,13 @@ typedef enum {
     picoquic_callback_path_address_observed, /* The peer has reported an address for the path */
     picoquic_callback_app_wakeup, /* wakeup timer set by application has expired */
     picoquic_callback_next_path_allowed, /* There are enough path_id and connection ID available for the next path */
-    picoquic_callback_multicast_join_possible, /* MC_JOIN frame has been received and client is able to join */
-    picoquic_callback_multicast_stream_data, /* Stream frame has been received over multicast */
-    picoquic_callback_multicast_datagram, /* Datagram frame has been received over multicast */
+    /* Multicast events */
+    picoquic_callback_multicast_join_possible, /* (client event) MC_JOIN frame has been received and client is able to join */
+    picoquic_callback_multicast_join_attempted, /* (server event) Multicast client sent MC_STATUS(Joined) */
+    picoquic_callback_multicast_join_confirmed, /* (server event) Multicast client sent MC_ACK for first time */
+    picoquic_callback_multicast_left, /* (server event) Multicast client sent MC_STATUS(Declined Join) or MC_STATUS(Left) */
+    picoquic_callback_multicast_stream_data, /* (client event) Stream frame has been received over multicast */
+    picoquic_callback_multicast_datagram, /* (client event) Datagram frame has been received over multicast */
 } picoquic_call_back_event_t;
 
 typedef struct st_picoquic_tp_prefered_address_t {

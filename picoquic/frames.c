@@ -7154,7 +7154,7 @@ const uint8_t* picoquic_decode_mc_state_frame(picoquic_cnx_t* cnx, const uint8_t
         return NULL;
     }
 
-    // Frame type TBC-0c (Application State Code) currently not supported
+    // Frame type TBD-0c (Application State Code) currently not supported
     if (frame_id64 == picoquic_frame_type_mc_state_application) {
         picoquic_connection_error_ex(cnx, PICOQUIC_TRANSPORT_FRAME_FORMAT_ERROR, frame_id64, "Received unsupported MC_STATE frame of type TBD-0c\n");
         return NULL;
@@ -7187,6 +7187,8 @@ const uint8_t* picoquic_decode_mc_state_frame(picoquic_cnx_t* cnx, const uint8_t
     uint8_t state;
     uint64_t reason;
     uint64_t reason_phrase_length;
+
+    picoquic_mc_state_enum state_before = channel_found->state;
 
     if ((bytes = picoquic_frames_varint_decode(bytes, bytes_max, &sequence_number)) != NULL &&
         (bytes = picoquic_frames_uint8_decode(bytes, bytes_max, &state)) != NULL &&
@@ -7224,7 +7226,7 @@ const uint8_t* picoquic_decode_mc_state_frame(picoquic_cnx_t* cnx, const uint8_t
             // ignoring MC_STATE frame 
             fprintf(stdout, "Notice: MC_STATE(Joined) frame received outside of join process, ignoring frame\n");
         }
-    } 
+    }
 
     // MC_STATE(Declined Join)
     if (state == picoquic_mc_state_frame_declined_join) {
@@ -7270,6 +7272,16 @@ const uint8_t* picoquic_decode_mc_state_frame(picoquic_cnx_t* cnx, const uint8_t
         else {
             // ignoring MC_STATE frame 
             fprintf(stdout, "Notice: MC_STATE(Retired) frame received in other state than 'retire pending', ignoring frame\n");
+        }
+    }
+
+    // Server callback when state changed
+    if (state_before != channel_found->state) {
+        if (channel_found->state == picoquic_mc_state_join_attempted) {
+            cnx->callback_fn(cnx, 0, NULL, 0, picoquic_callback_multicast_join_attempted, cnx->callback_ctx, &channel_found->channel->channel_id);
+        }
+        if (channel_found->state == picoquic_mc_state_left) {
+            cnx->callback_fn(cnx, 0, NULL, 0, picoquic_callback_multicast_left, cnx->callback_ctx, &channel_found->channel->channel_id);
         }
     }
 
