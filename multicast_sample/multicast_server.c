@@ -69,162 +69,148 @@
  * for each of the call back events.
  */
 
-typedef struct st_multicast_server_stream_ctx_t
+typedef struct st_multicast_server_datagram_ctx_t
 {
-    struct st_multicast_server_stream_ctx_t *next_stream;
-    struct st_multicast_server_stream_ctx_t *previous_stream;
-    uint64_t stream_id;
+    struct st_multicast_server_datagram_ctx_t *next_datagram;
+    struct st_multicast_server_datagram_ctx_t *previous_datagram;
+    uint64_t datagram_id;
     FILE *F;
     uint8_t file_name[256];
     size_t name_length;
     size_t file_length;
     size_t file_sent;
     unsigned int is_name_read : 1;
-    unsigned int is_stream_reset : 1;
-    unsigned int is_stream_finished : 1;
-} multicast_server_stream_ctx_t;
-
-typedef struct st_multicast_server_channel_ctx_t
-{
-    // TODO MC: Implement things
-} multicast_server_channel_ctx_t;
+    unsigned int is_datagram_reset : 1;
+    unsigned int is_datagram_finished : 1;
+} multicast_server_datagram_ctx_t;
 
 typedef struct st_multicast_server_ctx_t
 {
     char const *served_file;
     size_t served_file_len;
-    multicast_server_stream_ctx_t *first_stream;
-    multicast_server_stream_ctx_t *last_stream;
-    multicast_server_channel_ctx_t *ipv4_channel;
+    multicast_server_datagram_ctx_t *first_datagram;
+    multicast_server_datagram_ctx_t *last_datagram;
     picoquic_multicast_channel_t *mc_channel;
-    // TODO MC Maybe: save cnx pointers instead of, to really identify clients
+    // ENHANCE MC Maybe: save cnx pointers instead of, to really identify clients
     int joined_clients;
     int active_clients; 
 } multicast_server_ctx_t;
 
-multicast_server_stream_ctx_t *multicast_server_create_stream_context(multicast_server_ctx_t *server_ctx, uint64_t stream_id)
+multicast_server_datagram_ctx_t *multicast_server_create_datagram_context(multicast_server_ctx_t *server_ctx, uint64_t datagram_id)
 {
-    multicast_server_stream_ctx_t *stream_ctx = (multicast_server_stream_ctx_t *)malloc(sizeof(multicast_server_stream_ctx_t));
+    multicast_server_datagram_ctx_t *datagram_ctx = (multicast_server_datagram_ctx_t *)malloc(sizeof(multicast_server_datagram_ctx_t));
 
-    if (stream_ctx != NULL)
+    if (datagram_ctx != NULL)
     {
-        memset(stream_ctx, 0, sizeof(multicast_server_stream_ctx_t));
+        memset(datagram_ctx, 0, sizeof(multicast_server_datagram_ctx_t));
 
-        if (server_ctx->last_stream == NULL)
+        if (server_ctx->last_datagram == NULL)
         {
-            server_ctx->last_stream = stream_ctx;
-            server_ctx->first_stream = stream_ctx;
+            server_ctx->last_datagram = datagram_ctx;
+            server_ctx->first_datagram = datagram_ctx;
         }
         else
         {
-            stream_ctx->previous_stream = server_ctx->last_stream;
-            server_ctx->last_stream->next_stream = stream_ctx;
-            server_ctx->last_stream = stream_ctx;
+            datagram_ctx->previous_datagram = server_ctx->last_datagram;
+            server_ctx->last_datagram->next_datagram = datagram_ctx;
+            server_ctx->last_datagram = datagram_ctx;
         }
-        stream_ctx->stream_id = stream_id;
+        datagram_ctx->datagram_id = datagram_id;
     }
 
-    return stream_ctx;
+    return datagram_ctx;
 }
 
-// int multicast_server_open_stream(multicast_server_ctx_t *server_ctx, multicast_server_stream_ctx_t *stream_ctx)
-// {
-//     int ret = 0;
-//     char file_path[1024];
+int multicast_server_open_file(multicast_server_ctx_t *server_ctx, multicast_server_datagram_ctx_t *datagram_ctx)
+{
+    int ret = 0;
+    char file_path[1024];
 
-//     /* Keep track that the full file name was acquired. */
-//     stream_ctx->is_name_read = 1;
+    /* Keep track that the full file name was acquired. */
+    datagram_ctx->is_name_read = 1;
 
-//     /* Verify the name, then try to open the file */
-//     if (server_ctx->default_dir_len + stream_ctx->name_length + 1 > sizeof(file_path))
-//     {
-//         ret = PICOQUIC_MULTICAST_NAME_TOO_LONG_ERROR;
-//     }
-//     else
-//     {
-//         /* Verify that the default path is empty of terminates with "/" or "\" depending on OS,
-//          * and format the file path */
-//         size_t dir_len = server_ctx->default_dir_len;
-//         if (dir_len > 0)
-//         {
-//             memcpy(file_path, server_ctx->default_dir, dir_len);
-//             if (file_path[dir_len - 1] != PICOQUIC_FILE_SEPARATOR[0])
-//             {
-//                 file_path[dir_len] = PICOQUIC_FILE_SEPARATOR[0];
-//                 dir_len++;
-//             }
-//         }
-//         memcpy(file_path + dir_len, stream_ctx->file_name, stream_ctx->name_length);
-//         file_path[dir_len + stream_ctx->name_length] = 0;
+    /* Verify the name, then try to open the file */
+    if (server_ctx->served_file + 1 > sizeof(file_path))
+    {
+        ret = PICOQUIC_MULTICAST_NAME_TOO_LONG_ERROR;
+    }
+    else
+    {
+        size_t path_len = server_ctx->served_file_len;
+        if (path_len > 0)
+        {
+            memcpy(file_path, server_ctx->served_file, path_len);
+        }
+        file_path[path_len] = 0;
 
-//         /* Use the picoquic_file_open API for portability to Windows and Linux */
-//         stream_ctx->F = picoquic_file_open(file_path, "rb");
+        /* Use the picoquic_file_open API for portability to Windows and Linux */
+        datagram_ctx->F = picoquic_file_open(file_path, "rb");
 
-//         if (stream_ctx->F == NULL)
-//         {
-//             ret = PICOQUIC_MULTICAST_NO_SUCH_FILE_ERROR;
-//         }
-//         else
-//         {
-//             /* Assess the file size, as this is useful for data planning */
-//             long sz;
-//             fseek(stream_ctx->F, 0, SEEK_END);
-//             sz = ftell(stream_ctx->F);
+        if (datagram_ctx->F == NULL)
+        {
+            ret = PICOQUIC_MULTICAST_NO_SUCH_FILE_ERROR;
+        }
+        else
+        {
+            /* Assess the file size, as this is useful for data planning */
+            long sz;
+            fseek(datagram_ctx->F, 0, SEEK_END);
+            sz = ftell(datagram_ctx->F);
 
-//             if (sz <= 0)
-//             {
-//                 stream_ctx->F = picoquic_file_close(stream_ctx->F);
-//                 ret = PICOQUIC_MULTICAST_FILE_READ_ERROR;
-//             }
-//             else
-//             {
-//                 stream_ctx->file_length = (size_t)sz;
-//                 fseek(stream_ctx->F, 0, SEEK_SET);
-//                 ret = 0;
-//             }
-//         }
-//     }
+            if (sz <= 0)
+            {
+                datagram_ctx->F = picoquic_file_close(datagram_ctx->F);
+                ret = PICOQUIC_MULTICAST_FILE_READ_ERROR;
+            }
+            else
+            {
+                datagram_ctx->file_length = (size_t)sz;
+                fseek(datagram_ctx->F, 0, SEEK_SET);
+                ret = 0;
+            }
+        }
+    }
 
-//     return ret;
-// }
+    return ret;
+}
 
-void multicast_server_delete_stream_context(multicast_server_ctx_t *server_ctx, multicast_server_stream_ctx_t *stream_ctx)
+void multicast_server_delete_stream_context(multicast_server_ctx_t *server_ctx, multicast_server_datagram_ctx_t *datagram_ctx)
 {
     /* Close the file if it was open */
-    if (stream_ctx->F != NULL)
+    if (datagram_ctx->F != NULL)
     {
-        stream_ctx->F = picoquic_file_close(stream_ctx->F);
+        datagram_ctx->F = picoquic_file_close(datagram_ctx->F);
     }
 
     /* Remove the context from the server's list */
-    if (stream_ctx->previous_stream == NULL)
+    if (datagram_ctx->previous_datagram == NULL)
     {
-        server_ctx->first_stream = stream_ctx->next_stream;
+        server_ctx->first_datagram = datagram_ctx->next_datagram;
     }
     else
     {
-        stream_ctx->previous_stream->next_stream = stream_ctx->next_stream;
+        datagram_ctx->previous_datagram->next_datagram = datagram_ctx->next_datagram;
     }
 
-    if (stream_ctx->next_stream == NULL)
+    if (datagram_ctx->next_datagram == NULL)
     {
-        server_ctx->last_stream = stream_ctx->previous_stream;
+        server_ctx->last_datagram = datagram_ctx->previous_datagram;
     }
     else
     {
-        stream_ctx->next_stream->previous_stream = stream_ctx->previous_stream;
+        datagram_ctx->next_datagram->previous_datagram = datagram_ctx->previous_datagram;
     }
 
     /* release the memory */
-    free(stream_ctx);
+    free(datagram_ctx);
 }
 
 void multicast_server_delete_context(multicast_server_ctx_t *server_ctx)
 {
     /* Delete any remaining stream context */
-    while (server_ctx->first_stream != NULL)
+    while (server_ctx->first_datagram != NULL)
     {
-        multicast_server_delete_stream_context(server_ctx, server_ctx->first_stream);
+        multicast_server_delete_stream_context(server_ctx, server_ctx->first_datagram);
     }
 
     /* release the memory */
@@ -237,7 +223,7 @@ int multicast_server_callback(picoquic_cnx_t *cnx,
 {
     int ret = 0;
     multicast_server_ctx_t *server_ctx = (multicast_server_ctx_t *)callback_ctx;
-    multicast_server_stream_ctx_t *stream_ctx = (multicast_server_stream_ctx_t *)v_stream_ctx;
+    multicast_server_datagram_ctx_t *datagram_ctx = (multicast_server_datagram_ctx_t *)v_stream_ctx;
 
     /* If this is the first reference to the connection, the application context is set
      * to the default value defined for the server. This default value contains the pointer
@@ -423,6 +409,7 @@ int multicast_server_callback(picoquic_cnx_t *cnx,
             break;
         case picoquic_callback_multicast_join_attempted:
             // TODO MC: If data sending on multicast channel did not start yet, start now
+            // TODO MC: Continue implementation here
             break;
         case picoquic_callback_multicast_join_confirmed: 
             // TODO MC: currently not implemented (when MC_ACK is received)
@@ -500,7 +487,7 @@ int picoquic_multicast_server(int server_port, const char *server_cert, const ch
         struct sockaddr_storage group_ip;
         picoquic_store_text_addr(&group_ip, PICOQUIC_MULTICAST_GROUP_IP, PICOQUIC_MULTICAST_GROUP_PORT);
 
-        picoquic_create_multicast_channel(quic, &default_context.mc_channel, PICOQUIC_MULTICAST_MAX_CLIENTS, &group_ip, NULL);
+        picoquic_create_multicast_channel(quic, 0, &default_context.mc_channel, PICOQUIC_MULTICAST_MAX_CLIENTS, &group_ip, NULL);
     }
 
     /* Wait for packets using the wait loop provided in the library.
