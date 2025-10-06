@@ -1239,6 +1239,12 @@ int picoquic_incoming_packet_ex(
 * The port numbers in the socket addresses structures are expressed in network order.
  */
 
+
+int picoquic_prepare_next_packet_multicast(picoquic_quic_t* quic,
+    uint8_t* send_buffer, size_t send_buffer_max, size_t* send_length,
+    struct sockaddr_storage* p_addr_to, struct sockaddr_storage* p_addr_from,
+    picoquic_multicast_channel_t** channel, size_t * send_msg_size);
+
 int picoquic_prepare_next_packet_ex(picoquic_quic_t* quic, 
     uint64_t current_time, uint8_t* send_buffer, size_t send_buffer_max, size_t* send_length, 
     struct sockaddr_storage* p_addr_to, struct sockaddr_storage* p_addr_from, int* if_index,
@@ -1248,6 +1254,10 @@ int picoquic_prepare_next_packet(picoquic_quic_t* quic,
     uint64_t current_time, uint8_t* send_buffer, size_t send_buffer_max, size_t* send_length,
     struct sockaddr_storage* p_addr_to, struct sockaddr_storage* p_addr_from, int* if_index,
     picoquic_connection_id_t* p_logcid, picoquic_cnx_t** p_last_cnx);
+
+int picoquic_prepare_packet_multicast(picoquic_multicast_channel_t* channel,
+    uint8_t* send_buffer, size_t send_buffer_max, size_t* send_length,
+    struct sockaddr_storage * p_addr_to, struct sockaddr_storage * p_addr_from, size_t* send_msg_size);
 
 int picoquic_prepare_packet_ex(picoquic_cnx_t* cnx,
     uint64_t current_time, uint8_t* send_buffer, size_t send_buffer_max, size_t* send_length,

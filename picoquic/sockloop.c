@@ -752,6 +752,223 @@ static int monitor_system_call_duration(packet_loop_system_call_duration_t* sc_d
     return shall_notify;
 }
 
+/* 
+ * Socket loop for multicast sender. No receiving, minimal logic, only sends data to multicast group address.
+ * No support for Windows for now.
+ * // TODO MC: Change this, so that it only sends data for specified multicast channel
+ */
+void* picoquic_packet_loop_multicast_send(void* v_ctx)
+{
+    picoquic_network_thread_ctx_t* thread_ctx = (picoquic_network_thread_ctx_t*)v_ctx;
+    picoquic_quic_t* quic = thread_ctx->quic;
+    picoquic_packet_loop_param_t* param = thread_ctx->param;
+    picoquic_multicast_channel_t* mc_channel = param->multicast_channel;
+    picoquic_packet_loop_cb_fn loop_callback = thread_ctx->loop_callback;
+    void* loop_callback_ctx = thread_ctx->loop_callback_ctx;
+    int ret = 0;
+    struct sockaddr_storage addr_from;
+    struct sockaddr_storage addr_to;
+
+    uint8_t* send_buffer = NULL;
+    size_t send_length = 0;
+    size_t send_msg_size = 0;
+    size_t send_buffer_size = param->socket_buffer_size;
+    size_t* send_msg_ptr = NULL;
+    picoquic_socket_ctx_t s_ctx[4];
+    int nb_sockets = 0;
+    int nb_sockets_available = 0;
+    picoquic_packet_loop_options_t options = { 0 };
+    packet_loop_system_call_duration_t sc_duration = { 0 };
+
+    int is_wake_up_event;
+
+    if (thread_ctx->thread_name != NULL) {
+        thread_ctx->thread_setname_fn(thread_ctx->thread_name);
+    }
+
+    if (send_buffer_size == 0) {
+        send_buffer_size = 0xffff;
+    }
+
+    if (mc_channel == NULL) {
+        ret = -1;
+    }
+
+    if (ret == 0) {
+        memset(s_ctx, 0, sizeof(s_ctx));
+        if ((nb_sockets = picoquic_packet_loop_open_sockets(param->local_port,
+            mc_channel->group_ip.ss_family, param->socket_buffer_size,
+            0, param->do_not_use_gso, s_ctx)) <= 0) {
+            ret = PICOQUIC_ERROR_UNEXPECTED_ERROR;
+        }
+        else if (loop_callback != NULL) {
+            struct sockaddr_storage l_addr;
+            ret = loop_callback(quic, picoquic_packet_loop_ready, loop_callback_ctx, &options);
+
+            if (picoquic_store_loopback_addr(&l_addr, s_ctx[0].af, s_ctx[0].port) == 0) {
+                ret = loop_callback(quic, picoquic_packet_loop_port_update, loop_callback_ctx, &l_addr);
+            }
+        }
+    }
+
+    if (ret == 0) {
+        nb_sockets_available = nb_sockets;
+
+        // Only one socket supported by now
+        if (nb_sockets > 1) {
+            ret = -1;
+        }
+
+        if (udp_gso_available && !param->do_not_use_gso) {
+            send_buffer_size = 0xFFFF;
+            send_msg_ptr = &send_msg_size;
+        }
+        send_buffer = malloc(send_buffer_size);
+        if (send_buffer == NULL) {
+            ret = -1;
+        }
+    }
+
+    if (ret == 0) {
+        thread_ctx->thread_is_ready = 1;
+    }
+    else {
+        DBG_PRINTF("%s", "Thread cannot run");
+    }
+
+    /* Start of Packet Loop */
+    while (ret == 0 && !thread_ctx->thread_should_close) {
+        if (is_wake_up_event) {
+            ret = loop_callback(quic, picoquic_packet_loop_wake_up, loop_callback_ctx, NULL);
+        }
+        else {
+            size_t bytes_sent = 0;
+            size_t nb_packets_sent = 0;
+
+            /* Start of send loop */
+            // CHECK MC: Limit of nb_packets_sent in send loop still needed? Maybe for wakeup events
+            while (ret == 0 && nb_packets_sent < PICOQUIC_PACKET_LOOP_SEND_MAX) {
+                struct sockaddr_storage peer_addr;
+                struct sockaddr_storage local_addr = { 0 };
+                int sock_ret = 0;
+                int sock_err = 0;
+
+                // TODO MC: picoquic_prepare_next_packet_multicast
+                ret = picoquic_prepare_next_packet_multicast(quic,
+                    send_buffer, send_buffer_size, &send_length,
+                    &peer_addr, &local_addr, &mc_channel,
+                    send_msg_ptr);
+
+                if (ret != 0 || send_length <= 0) { 
+                    break;
+                }
+
+                /* If send_msg_size is defined, sendmsg may send more than one packet.
+                 * We compute that to update the number of packets sent in the loop.
+                 */
+                nb_packets_sent += (send_msg_size == 0) ? 1 :
+                    (send_length + send_msg_size - 1) / (send_msg_size);
+                if (send_length > param->send_length_max) {
+                    param->send_length_max = send_length;
+                }
+                
+                SOCKET_TYPE send_socket = s_ctx[0].fd;
+                uint16_t send_port = (peer_addr.ss_family == AF_INET) ?
+                    ((struct sockaddr_in*)&local_addr)->sin_port :
+                    ((struct sockaddr_in6*)&local_addr)->sin6_port;
+
+                bytes_sent += send_length;
+
+                if (send_socket == INVALID_SOCKET) {
+                    sock_ret = -1;
+                    sock_err = -1;
+                }
+                else
+                {
+                    if (param->simulate_eio && send_length > PICOQUIC_MAX_PACKET_SIZE) {
+                        /* Test hook, simulating a driver that does not support GSO */
+                        sock_ret = -1;
+                        sock_err = EIO;
+                        param->simulate_eio = 0;
+                    }
+                    else {
+                        sock_ret = picoquic_sendmsg(send_socket,
+                            (struct sockaddr*)&peer_addr, (struct sockaddr*)&local_addr, 0,
+                            (const char*)send_buffer, (int)send_length, (int)send_msg_size, &sock_err);
+                    }
+                }
+                if (sock_ret <= 0) {
+                    /* TODO: add a test in which the socket fails. */
+                    // CLEAN MC: Refactor logging without using stdout
+                    fprintf(stdout, "Could not send message to AF_to=%d, AF_from=%d, ret=%d, err=%d",
+                        peer_addr.ss_family, local_addr.ss_family, sock_ret, sock_err);
+
+                    if (sock_err == EIO) {
+                        /* TODO: this is an error encountered if the system supports GSO, but
+                            * the specific interface driver does not. Main example is Mininet.
+                            * Not sure that we can treat that correctly. Try to minimize the
+                            * amount of untested code? Rely on config flag? Rely on error
+                            * recovery? */
+                        size_t packet_index = 0;
+                        size_t packet_size = send_msg_size;
+
+                        while (packet_index < send_length) {
+                            if (packet_index + packet_size > send_length) {
+                                packet_size = send_length - packet_index;
+                            }
+                            sock_ret = picoquic_sendmsg(send_socket,
+                                (struct sockaddr*)&peer_addr, (struct sockaddr*)&local_addr, 0,
+                                (const char*)(send_buffer + packet_index), (int)packet_size, 0, &sock_err);
+                            if (sock_ret > 0) {
+                                packet_index += packet_size;
+                            }
+                            else {
+                                fprintf(stdout, "Retry with packet size=%zu fails at index %zu, ret=%d, err=%d.",
+                                    packet_size, packet_index, sock_ret, sock_err);
+                                break;
+                            }
+                        }
+                        if (sock_ret > 0) {
+                            fprintf(stdout, "Retry of %zu bytes by chunks of %zu bytes succeeds.",
+                                send_length, send_msg_size);
+                        }
+                        if (send_msg_ptr != NULL) {
+                            /* Make sure that we do not use GSO anymore in this run */
+                            send_msg_ptr = NULL;
+                            fprintf(stdout, "%s", "UDP GSO was disabled");
+                        }
+                    }
+                }
+            }
+
+            if (ret == 0 && loop_callback != NULL) {
+                ret = loop_callback(quic, picoquic_packet_loop_after_send, loop_callback_ctx, &bytes_sent);
+            }
+        }
+    }
+
+    thread_ctx->thread_is_ready = 0;
+
+    if (ret == PICOQUIC_NO_ERROR_TERMINATE_PACKET_LOOP) {
+        /* Normal termination requested by the application, returns no error */
+        ret = 0;
+    }
+
+    /* Close the sockets */
+    for (int i = 0; i < nb_sockets; i++) {
+        picoquic_packet_loop_close_socket(&s_ctx[i]);
+    }
+
+    if (send_buffer != NULL) {
+        free(send_buffer);
+    }
+    thread_ctx->return_code = ret;
+
+    if (thread_ctx->is_threaded) {
+        pthread_exit((void*)&thread_ctx->return_code);
+    }
+    return(NULL);
+}
 
 #ifdef _WINDOWS
     DWORD WINAPI picoquic_packet_loop_v3(LPVOID v_ctx)
@@ -1255,9 +1472,11 @@ void picoquic_internal_thread_delete(void** v_thread_id)
     picoquic_delete_thread((picoquic_thread_t *)v_thread_id);
 }
 
-picoquic_network_thread_ctx_t* picoquic_start_custom_network_thread(picoquic_quic_t* quic, picoquic_packet_loop_param_t* param,
+// TODO MC: Maybe reset this to initial function and set custom packet loop function via packet_loop_params
+picoquic_network_thread_ctx_t* picoquic_start_custom_network_thread_ex(picoquic_quic_t* quic, picoquic_packet_loop_param_t* param,
     picoquic_custom_thread_create_fn thread_create_fn, picoquic_custom_thread_delete_fn thread_delete_fn,
     picoquic_custom_thread_setname_fn thread_setname_fn, char const* thread_name,
+    void*(packet_loop_fn)(void* v_ctx),
     picoquic_packet_loop_cb_fn loop_callback, void* loop_callback_ctx, int* ret)
 {
     picoquic_network_thread_ctx_t* thread_ctx = (picoquic_network_thread_ctx_t*)malloc(sizeof(picoquic_network_thread_ctx_t));
@@ -1288,7 +1507,7 @@ picoquic_network_thread_ctx_t* picoquic_start_custom_network_thread(picoquic_qui
                 thread_ctx->thread_delete_fn = picoquic_internal_thread_delete;
             }
             thread_ctx->thread_name = thread_name;
-            if ((*ret = thread_create_fn((void **)&thread_ctx->pthread, picoquic_packet_loop_v3, (void*)thread_ctx)) != 0) {
+            if ((*ret = thread_create_fn((void **)&thread_ctx->pthread, packet_loop_fn, (void*)thread_ctx)) != 0) {
                 /* Free the context and return error condition if something went wrong */
                 thread_ctx->is_threaded = 0;
                 picoquic_delete_network_thread(thread_ctx);
@@ -1297,6 +1516,17 @@ picoquic_network_thread_ctx_t* picoquic_start_custom_network_thread(picoquic_qui
         }
     }
     return thread_ctx;
+}
+
+picoquic_network_thread_ctx_t* picoquic_start_custom_network_thread(picoquic_quic_t* quic, picoquic_packet_loop_param_t* param,
+    picoquic_custom_thread_create_fn thread_create_fn, picoquic_custom_thread_delete_fn thread_delete_fn,
+    picoquic_custom_thread_setname_fn thread_setname_fn, char const* thread_name,
+    picoquic_packet_loop_cb_fn loop_callback, void* loop_callback_ctx, int* ret)
+{
+    return picoquic_start_custom_network_thread_ex(quic, param, 
+        thread_create_fn, thread_delete_fn, thread_setname_fn, 
+        thread_name, picoquic_packet_loop_v3, loop_callback, loop_callback_ctx, ret
+    );
 }
 
 picoquic_network_thread_ctx_t* picoquic_start_network_thread(picoquic_quic_t* quic,

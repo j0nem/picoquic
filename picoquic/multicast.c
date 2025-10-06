@@ -58,7 +58,7 @@ int picoquic_mcrx_added_socket_cb(struct mcrx_ctx* ctx,
     channel->socket_open = 1;
 
     // do_receive call maybe not needed?
-    // TODO MC: Figure out how to use the do_receive callback
+    // CHECK MC: Figure out how to use the do_receive callback or remove
     do_receive(sub, fd);
     return MCRX_ERR_OK;
 }
@@ -107,8 +107,6 @@ int picoquic_mcrx_initialize(struct mcrx_ctx **ctxp, picoquic_multicast_channel_
     err = mcrx_ctx_set_receive_socket_handlers(ctx,
         picoquic_mcrx_added_socket_cb, picoquic_mcrx_removed_socket_cb);
 
-    // TODO MC: Maybe add picoquic_quic context to mcrx_ctx userdata for socket add/remove callbacks
-        
     if (err != 0) {
         ctx = mcrx_ctx_unref(ctx);
         fprintf(stdout, "Error in picoquic_mcrx_initialize: mcrx_ctx_set_receive_socket_handlers returned error\n");

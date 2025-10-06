@@ -164,6 +164,23 @@ int picoquic_delete_stream_if_closed(picoquic_cnx_t* cnx, picoquic_stream_head_t
     return ret;
 }
 
+int picoquic_delete_stream_if_closed_multicast(picoquic_multicast_channel_t* channel, picoquic_stream_head_t* stream)
+{
+    int ret = 0;
+
+    if (!stream->is_closed && picoquic_is_stream_closed(stream, 0)) {
+        stream->is_closed = 1;
+        ret = 1;
+    }
+    
+    /* We only delete the stream if there are no pending retransmissions */
+    if (stream->is_closed && picoquic_is_stream_acked(stream)) {
+        picoquic_delete_stream_multicast(channel, stream);
+    }
+
+    return ret;
+}
+
 /* if the initial remote has changed, update the existing streams.
  * By definition, this is only needed for streams locally created for 0-RTT traffic.
  */
@@ -1425,6 +1442,78 @@ picoquic_stream_head_t* picoquic_find_ready_stream_path(picoquic_cnx_t* cnx, pic
                 }
             }
         }
+        stream = next_stream;
+    }
+
+    return found_stream;
+}
+
+picoquic_stream_head_t* picoquic_find_ready_stream_multicast(picoquic_multicast_channel_t* channel)
+{
+    picoquic_stream_head_t* first_stream = channel->first_output_stream;
+    picoquic_stream_head_t* stream = first_stream;
+    picoquic_stream_head_t* found_stream = NULL;
+
+    /* Look for a ready stream */
+    while (stream != NULL) {
+        int has_data = 0;
+        picoquic_stream_head_t* next_stream = stream->next_output_stream;
+
+        // Only server-initiated, unidirectional streams are allowed in multicast channels
+        if (IS_CLIENT_STREAM_ID(stream->stream_id) != 0 || IS_BIDIR_STREAM_ID(stream->stream_id) != 0) {
+            stream = next_stream;
+            continue;
+        }
+
+        if (found_stream != NULL && stream->stream_priority > found_stream->stream_priority) {
+            /* All the streams at that priority level have been examined,
+             * the current selection is validated */
+            break;
+        }
+        // CHECK MC: Reinsert pacing condition below?
+        has_data = (/*channel->maxdata_remote > channel->data_sent &&*/ stream->sent_offset < stream->maxdata_remote && (stream->is_active ||
+                (stream->send_queue != NULL && stream->send_queue->length > stream->send_queue->offset) ||
+                (stream->fin_requested && !stream->fin_sent)));
+
+        if (stream->reset_requested && !stream->reset_sent) {
+            /* urgent action is needed, this takes precedence over FIFO vs round-robin processing */
+            found_stream = stream;
+            break;
+        } else if (has_data) {
+            /* Check that this stream is actually available for sending data */
+            if (stream->sent_offset == 0) {
+                has_data = 0;
+            }
+            if (has_data) {
+                /* Something can be sent */
+                if ((stream->stream_priority & 1) != 0) {
+                    /* This priority level requests FIFO processing, so we return the first available stream */
+                    found_stream = stream;
+                    break;
+                }
+                else if (found_stream == NULL || stream->last_time_data_sent < found_stream->last_time_data_sent) {
+                    /* Select this stream, but need to check if another stream should go before in round robin order */
+                    found_stream = stream;
+                }
+            }
+        }
+        else if (((stream->fin_requested && stream->fin_sent) || (stream->reset_requested && stream->reset_sent))) {
+            /* If stream is exhausted, remove from output list */
+            picoquic_remove_output_stream_multicast(channel, stream);
+            picoquic_delete_stream_if_closed_multicast(channel, stream);
+        }
+        // CHECK MC: Maybe re-add blocking/flow control code below
+        // else {
+        //     if (stream->is_active ||
+        //         (stream->send_queue != NULL && stream->send_queue->length > stream->send_queue->offset)) {
+        //         if (stream->sent_offset >= stream->maxdata_remote) {
+        //             channel->stream_blocked = 1;
+        //         }
+        //         else if (cnx->maxdata_remote <= cnx->data_sent) {
+        //             cnx->flow_blocked = 1;
+        //         }
+        //     }
+        // }
         stream = next_stream;
     }
 
@@ -6214,6 +6303,8 @@ picoquic_mc_channel_in_cnx_t* picoquic_add_channel_to_cnx(picoquic_cnx_t* cnx, p
         return NULL;
     }
 
+    channel->quic = cnx->quic;
+
     // Add channel to cnx struct
     picoquic_mc_channel_in_cnx_t** new_channel_list = (picoquic_mc_channel_in_cnx_t **)malloc((cnx->nb_mc_channels + 1) * sizeof(picoquic_mc_channel_in_cnx_t *));
 
@@ -6311,7 +6402,7 @@ uint8_t* picoquic_format_mc_announce_frame(uint8_t* bytes, uint8_t* bytes_max, p
     }
 
     // Source IP
-    // TODO MC: Make source address configurable
+    // ENHANCE MC: Make source address configurable
     struct sockaddr_storage* src_addr = &path_x->local_addr;
     uint8_t* src_addr_text;
     uint8_t src_addr_text_len;
@@ -6495,6 +6586,9 @@ const uint8_t* picoquic_decode_mc_announce_frame(picoquic_cnx_t* cnx, const uint
     || (bytes = picoquic_frames_varint_decode(bytes, bytes_max, &channel->max_ack_delay)) == NULL)  {
         return NULL;
     }
+
+    // Add header crypto context to channel (only decryption)
+    picoquic_setup_multicast_crypto_context_header(cnx->quic, &channel->header_secret, channel->crypto_context, channel->header_protection_algorithm, 0);
 
     picoquic_mc_channel_in_cnx_t* new_channel_in_cnx;
 
@@ -6756,6 +6850,9 @@ const uint8_t* picoquic_decode_mc_key_frame(picoquic_cnx_t* cnx, const uint8_t* 
 
     channel->aead_secrets[channel->nb_aead_secrets] = aead;
     channel->nb_aead_secrets++;
+
+    // Add aead crypto context to channel (only decryption)
+    picoquic_setup_multicast_crypto_context_aead(cnx->quic, aead, channel->crypto_context, channel->aead_algorithm, 0);
 
     // Add channel to cnx if not already done
     picoquic_mc_channel_in_cnx_t* new_channel_in_cnx;
@@ -7205,7 +7302,7 @@ const uint8_t* picoquic_decode_mc_state_frame(picoquic_cnx_t* cnx, const uint8_t
         return NULL;
     }
 
-    // TODO MC: Maybe add more defined behavior for the different state types
+    // ENHANCE MC: Maybe add more defined behavior for the different state types
 
     // MC_STATE(Joined)
     if (state == picoquic_mc_state_frame_joined) {

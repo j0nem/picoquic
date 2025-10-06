@@ -615,22 +615,52 @@ typedef int (*picoquic_performance_log_fn)(picoquic_quic_t* quic, picoquic_cnx_t
  */
 
 typedef struct st_picoquic_multicast_channel_t {
+    picoquic_quic_t* quic;
     picoquic_multicast_channel_id_t channel_id;
-    struct sockaddr_storage source_ip; // TODO MC: This is currently zero in server mode, maybe change if needed later
+    struct sockaddr_storage source_ip; // CHECK MC: This is currently zero in server mode, maybe change if needed later
     struct sockaddr_storage group_ip;
     uint16_t header_protection_algorithm;
     uint16_t aead_algorithm;
     picoquic_multicast_header_secret_t header_secret;
     picoquic_multicast_aead_secret_t ** aead_secrets;
     int nb_aead_secrets;
+    picoquic_crypto_context_t* crypto_context;
     uint16_t hash_algorithm;
     uint64_t max_rate;
     uint64_t max_ack_delay;
     int is_retired;
+
     int client_mode;     // 0: sending (server), 1: receiving (client)
     int socket_open;     // bool, if a socket is opened
     SOCKET_TYPE fd;      // fd of used local socket (client: via mcrx)
     uint16_t local_port; // port of used local socket (server: sending, client: receiving - via mcrx)
+
+    int is_datagram_ready;
+    uint64_t nb_packets_sent;
+    size_t max_mtu_sent;
+    size_t send_mtu;
+    picoquic_packet_context_t* pkt_ctx;
+
+    /* Management of streams */
+    picosplay_tree_t stream_tree;
+    picoquic_stream_head_t * first_output_stream;
+    picoquic_stream_head_t * last_output_stream;
+    uint64_t high_priority_stream_id;
+    uint64_t next_stream_id[4];
+    // uint64_t priority_limit_for_bypass; /* Bypass CC if dtagram or stream priority lower than this, 0 means never */
+    // picoquic_pacing_t priority_bypass_pacing;
+
+    /* Repeat queue contains packets with data frames that should be
+     * sent according to priority when congestion window opens. */
+    picosplay_tree_t queue_data_repeat_tree;
+
+    /* Management of datagram queue */
+    unsigned int is_datagram_ready : 1; /* Active polling for datagrams */
+    picoquic_misc_frame_header_t* first_datagram;
+    picoquic_misc_frame_header_t* last_datagram;
+    uint64_t datagram_priority;
+    int datagram_conflicts_count;
+    int datagram_conflicts_max;
 } picoquic_multicast_channel_t;
 
 // State of a multicast channel in a cnx (with buffers for extensions):
@@ -672,10 +702,10 @@ typedef enum {
 
     // When an unrecoverable error occured
     // (this only refers to the channel usage in that connection, the channel itself may still be intact!)
-    picoqic_mc_state_error = 99
+    picoquic_mc_state_error = 99
 } picoquic_mc_state_enum;
 
-typedef struct st_picoquic_mc_channel_in_cnx_t { // TODO MC: Maybe add pointer back to cnx here for convenience?
+typedef struct st_picoquic_mc_channel_in_cnx_t { // ENHANCE MC: Maybe add pointer back to cnx here for convenience?
     picoquic_multicast_channel_t* channel;
     picoquic_mc_state_enum state;
     int key_available;
@@ -1976,12 +2006,14 @@ picoquic_stream_head_t* picoquic_create_stream(picoquic_cnx_t* cnx, uint64_t str
 picoquic_stream_head_t* picoquic_create_missing_streams(picoquic_cnx_t* cnx, uint64_t stream_id, int is_remote);
 int picoquic_is_stream_closed(picoquic_stream_head_t* stream, int client_mode);
 int picoquic_delete_stream_if_closed(picoquic_cnx_t* cnx, picoquic_stream_head_t* stream);
+int picoquic_delete_stream_if_closed_multicast(picoquic_multicast_channel_t* channel, picoquic_stream_head_t* stream);
 
 void picoquic_update_stream_initial_remote(picoquic_cnx_t* cnx);
 
 picoquic_stream_head_t * picoquic_stream_from_node(picosplay_node_t * node);
 void picoquic_insert_output_stream(picoquic_cnx_t* cnx, picoquic_stream_head_t * stream);
 void picoquic_remove_output_stream(picoquic_cnx_t* cnx, picoquic_stream_head_t * stream);
+void picoquic_remove_output_stream_multicast(picoquic_multicast_channel_t* channel, picoquic_stream_head_t * stream);
 void picoquic_reorder_output_stream(picoquic_cnx_t* cnx, picoquic_stream_head_t* stream);
 picoquic_stream_head_t * picoquic_first_stream(picoquic_cnx_t * cnx);
 picoquic_stream_head_t * picoquic_last_stream(picoquic_cnx_t * cnx);
@@ -1989,6 +2021,7 @@ picoquic_stream_head_t * picoquic_next_stream(picoquic_stream_head_t * stream);
 picoquic_stream_head_t* picoquic_find_stream(picoquic_cnx_t* cnx, uint64_t stream_id);
 void picoquic_add_output_streams(picoquic_cnx_t * cnx, uint64_t old_limit, uint64_t new_limit, unsigned int is_bidir);
 picoquic_stream_head_t* picoquic_find_ready_stream_path(picoquic_cnx_t* cnx, picoquic_path_t* path_x);
+picoquic_stream_head_t* picoquic_find_ready_stream_multicast(picoquic_multicast_channel_t* channel);
 picoquic_stream_head_t* picoquic_find_ready_stream(picoquic_cnx_t* cnx);
 int picoquic_is_tls_stream_ready(picoquic_cnx_t* cnx);
 const uint8_t* picoquic_decode_stream_frame(picoquic_cnx_t* cnx, const uint8_t* bytes,
@@ -2094,6 +2127,7 @@ void picoquic_stream_data_node_recycle(picoquic_stream_data_node_t* stream_data)
 picoquic_stream_data_node_t* picoquic_stream_data_node_alloc(picoquic_quic_t* quic);
 void picoquic_clear_stream(picoquic_stream_head_t* stream);
 void picoquic_delete_stream(picoquic_cnx_t * cnx, picoquic_stream_head_t * stream);
+void picoquic_delete_stream_multicast(picoquic_multicast_channel_t * channel, picoquic_stream_head_t * stream);
 picoquic_local_cnxid_list_t* picoquic_find_or_create_local_cnxid_list(picoquic_cnx_t* cnx, uint64_t unique_path_id, int do_create);
 picoquic_local_cnxid_t* picoquic_create_local_cnxid(picoquic_cnx_t* cnx,
     uint64_t unique_path_id, picoquic_connection_id_t* suggested_value, uint64_t current_time);

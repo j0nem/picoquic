@@ -112,6 +112,22 @@ int picoquic_mark_datagram_ready(picoquic_cnx_t* cnx, int is_ready)
     return ret;
 }
 
+int picoquic_mark_datagram_ready_multicast(picoquic_multicast_channel_t* channel, int is_ready)
+{
+    if (channel->client_mode) {
+        return -1;
+    }
+
+    int ret = 0;
+    int was_ready = channel->is_datagram_ready;
+
+    channel->is_datagram_ready = is_ready;
+    if (!was_ready && is_ready) {
+        picoquic_reinsert_by_wake_time(channel->quic, channel, picoquic_get_quic_time(channel->quic));
+    }
+    return ret;
+}
+
 int picoquic_mark_datagram_ready_path(picoquic_cnx_t* cnx, uint64_t unique_path_id, int is_path_ready)
 {
     int ret = 0;
@@ -789,6 +805,38 @@ size_t picoquic_predict_packet_header_length(
     return header_length;
 }
 
+size_t picoquic_predict_packet_header_length_multicast(
+    picoquic_multicast_channel_t* ch,
+    picoquic_packet_context_t * pkt_ctx)
+{
+    uint32_t header_length = 0;
+
+    if (ch == NULL) {
+        return 0;
+    }
+
+    /* Predict acceptable length of packet number */
+    uint8_t pn_l = 4;
+    int64_t delta = pkt_ctx->send_sequence;
+    if (pkt_ctx->pending_first != NULL) {
+        delta -= pkt_ctx->pending_first->sequence_number;
+    }
+    if (delta < 262144) {
+        pn_l = 3;
+        if (pkt_ctx->send_sequence < 1024) {
+            pn_l = 2;
+            if (pkt_ctx->send_sequence < 16) {
+                pn_l = 1;
+            }
+        }
+    }
+
+    /* Compute length of a short packet header */
+    header_length = 1 + ch->channel_id.id_len + pn_l;
+    
+    return header_length;
+}
+
 /*
  * Management of packet protection
  */
@@ -801,6 +849,20 @@ size_t picoquic_get_checksum_length(picoquic_cnx_t* cnx, picoquic_epoch_enum epo
     }
     else {
         DBG_PRINTF("Try getting checksum for empty context, epoch %d", epoch);
+    }
+
+    return ret;
+}
+
+size_t picoquic_get_checksum_length_multicast(picoquic_multicast_channel_t* ch)
+{
+    size_t ret = 16;
+
+    if (ch->crypto_context->aead_encrypt != NULL) {
+        ret = picoquic_aead_get_checksum_length(ch->crypto_context->aead_encrypt);
+    }
+    else {
+        DBG_PRINTF("%s\n", "Try getting checksum for empty context (multicast)");
     }
 
     return ret;
@@ -2946,11 +3008,11 @@ uint8_t * picoquic_prepare_multicast_state_frames(picoquic_cnx_t* cnx,
 
             if (params->max_aggregate_rate < ch->channel->max_rate || params->max_channel_ids < nb_channels_join_pending) {
                 // Channel join not possible, limit violation -> send MC_STATE(DECLINED_JOIN)
-                // TODO MC: Implement more in-depth limit checkings?
+                // ENHANCE MC: Implement more in-depth limit checkings?
                 uint8_t *bytes_next = picoquic_format_mc_state_frame(bytes, bytes_max, ch, more_data,
                     picoquic_frame_type_mc_state_multicast,
                     picoquic_mc_state_frame_declined_join,
-                    picoquic_mc_state_reason_property_violation); // TODO MC: If MC_LIMITS is just out of date, use mc_state_reason_unsynchronized_proerties instead
+                    picoquic_mc_state_reason_property_violation); // ENHANCE MC: If MC_LIMITS is just out of date, use mc_state_reason_unsynchronized_proerties instead
                 if (bytes_next > bytes) {
                     *is_pure_ack = 0;
                     bytes = bytes_next;
@@ -3174,6 +3236,129 @@ static uint8_t* picoquic_prepare_stream_and_datagrams(picoquic_cnx_t* cnx, picoq
         if (!something_sent) {
             break;
         }
+    }
+    *more_data |= more_data_this_round;
+
+    return bytes_next;
+}
+
+static uint8_t* picoquic_prepare_stream_and_datagrams_multicast(picoquic_multicast_channel_t* channel, uint8_t* bytes_next, uint8_t* bytes_max,
+    uint64_t max_priority_allowed, uint64_t current_time,
+    int* more_data, int* no_data_to_send, int* ret)
+{
+    int datagram_sent = 0;
+    int datagram_tried_and_failed = 0;
+    int stream_tried_and_failed = 0;
+    int more_data_this_round = 0;
+    int is_first_round = 1;
+
+    while (bytes_next + 8 < bytes_max && *ret == 0) {
+        /* Find the highest priority level for which there is something to send, then
+        * format the frames to send at that level. Repeat in a loop until the
+        * packet is full or there is nothing more to send. */
+        uint64_t datagram_present = channel->first_datagram != NULL || channel->is_datagram_ready;
+        picoquic_stream_head_t* first_stream = picoquic_find_ready_stream_multicast(channel);
+        // CHECK MC: re-insert pacing code below?
+        // picoquic_packet_t* first_repeat = picoquic_first_data_repeat_packet(cnx);
+        uint64_t current_priority = UINT64_MAX;
+        uint64_t stream_priority = UINT64_MAX;
+        uint8_t* bytes_before_iteration = bytes_next;
+        int something_sent = 0;
+        int conflict_found = 0;
+
+        more_data_this_round = 0;
+
+        int datagram_first = (channel->datagram_conflicts_max >= channel->datagram_conflicts_count);
+        if (datagram_present) {
+            current_priority = channel->datagram_priority;
+        }
+        if (first_stream != NULL) {
+            stream_priority = first_stream->stream_priority;
+        }
+        // CHECK MC: use first_repeat (pacing)?
+        // if (first_repeat != NULL && first_repeat->data_repeat_priority < stream_priority) {
+        //     stream_priority = first_repeat->data_repeat_priority;
+        // }
+        if (stream_priority < current_priority) {
+            current_priority = stream_priority;
+        }
+
+        if (current_priority == UINT64_MAX || current_priority >= max_priority_allowed) {
+            /* Nothing to send! */
+            if (is_first_round) {
+                *no_data_to_send = 1;
+            }
+            break;
+        }
+
+        // TODO MC: Continue rewritin below
+        // if (datagram_present &&
+        //     channel->datagram_priority == current_priority &&
+        //     (channel->datagram_priority < stream_priority || datagram_first)) {
+        //     bytes_next = picoquic_prepare_datagram_ready(cnx, path_x, bytes_next, bytes_max,
+        //         &more_data_this_round, is_pure_ack, &datagram_tried_and_failed, &datagram_sent, ret);
+        //     something_sent = datagram_sent;
+        // }
+
+        // if (first_repeat != NULL && first_repeat->data_repeat_priority == current_priority) {
+        //     uint8_t* bytes_first = bytes_next;
+        //     if (bytes_next + 8 < bytes_max) {
+        //         bytes_next = picoquic_copy_stream_frames_for_retransmit(cnx, bytes_next, bytes_max,
+        //             UINT64_MAX, &more_data_this_round, is_pure_ack);
+        //         if (bytes_next > bytes_first) {
+        //             cnx->datagram_conflicts_count = 0;
+        //             something_sent = 1;
+        //         }
+        //     }
+        //     else {
+        //         more_data_this_round |= 1;
+        //         conflict_found = 1;
+        //     }
+        // }
+
+        // if (first_stream != NULL && first_stream->stream_priority == current_priority) {
+        //     /* Encode the stream frame, or frames */
+        //     uint8_t* bytes_first = bytes_next;
+        //     if (bytes_next + 8 < bytes_max) {
+        //         bytes_next = picoquic_format_available_stream_frames(cnx, path_x, bytes_next, bytes_max, UINT64_MAX,
+        //             &more_data_this_round, is_pure_ack, &stream_tried_and_failed, ret);
+        //         if (bytes_next > bytes_first) {
+        //             cnx->datagram_conflicts_count = 0;
+        //             something_sent = 1;
+        //         }
+        //     }
+        //     else {
+        //         more_data_this_round |= 1;
+        //         conflict_found = 1;
+        //     }
+        // }
+
+        // if (datagram_sent && conflict_found) {
+        //     cnx->datagram_conflicts_count += 1;
+        // }
+
+        // if (datagram_present &&
+        //     cnx->datagram_priority == current_priority &&
+        //     cnx->datagram_priority <= stream_priority &&
+        //     !datagram_first) {
+        //     bytes_next = picoquic_prepare_datagram_ready(cnx, path_x, bytes_next, bytes_max,
+        //         more_data, is_pure_ack, &datagram_tried_and_failed, &datagram_sent, ret);
+        //     something_sent = datagram_sent;
+        // }
+
+        // if (current_priority < cnx->priority_limit_for_bypass && bytes_next > bytes_before_iteration) {
+        //     picoquic_update_pacing_data_after_send(&cnx->priority_bypass_pacing, bytes_next - bytes_before_iteration,
+        //         cnx->path[0]->send_mtu, current_time);
+        // }
+
+        // if (is_first_round) {
+        //     *no_data_to_send = ((first_stream == NULL && first_repeat == NULL) || stream_tried_and_failed) &&
+        //         (!datagram_present || datagram_tried_and_failed);
+        // }
+        // is_first_round = 0;
+        // if (!something_sent) {
+        //     break;
+        // }
     }
     *more_data |= more_data_this_round;
 
@@ -3723,7 +3908,7 @@ int picoquic_prepare_packet_ready(picoquic_cnx_t* cnx, picoquic_path_t* path_x, 
                             path_x, current_time, next_wake_time, &more_data, &is_pure_ack);
                     }
 
-                    // TODO MC: Maybe also include multicast parts in almost_ready
+                    // ENHANCE MC: Maybe also include multicast parts in almost_ready
                     if (cnx->is_multicast_enabled && !cnx->client_mode) {
                         /* SERVER: If required, prepare multicast announce, key and join frames. */
                         bytes_next = picoquic_prepare_multicast_init_frames(cnx, path_x,
@@ -3952,6 +4137,88 @@ int picoquic_prepare_packet_ready(picoquic_cnx_t* cnx, picoquic_path_t* path_x, 
         if (ret == 0 && picoquic_cnx_is_still_logging(cnx)) {
             picoquic_log_cc_dump(cnx, current_time);
         }
+    }
+    return ret;
+}
+
+/*  Prepare the next packet to send for multicast channels (always 1-rtt) */
+int picoquic_prepare_segment_multicast(picoquic_multicast_channel_t* channel,
+    picoquic_packet_t* packet, uint8_t* send_buffer, size_t send_buffer_max, 
+    size_t* send_length)
+{
+    int ret = 0;
+    size_t header_length = 0;
+    size_t length = 0;
+    size_t checksum_overhead = picoquic_get_checksum_length_multicast(channel);
+    size_t send_buffer_min_max = (send_buffer_max > channel->send_mtu) ? channel->send_mtu : send_buffer_max;
+    uint8_t* bytes = packet->bytes;
+    uint8_t* bytes_max = bytes + send_buffer_min_max - checksum_overhead;
+    uint8_t* bytes_next;
+    int more_data = 0;
+
+    packet->pc = picoquic_packet_context_application;
+
+    // ENHANCE MC: Add crypto rotation?
+    /* Concept in unicast: If the number of packets sent is larger that the max length of
+     * a crypto epoch, prepare a key rotation */
+
+    // TODO MC: Add retransmission logic
+    /* Concept in unicast: The first action is normally to retransmit lost packets. These lost packets
+     * are queued in the connection context as `cnx->data_repeat_first` when data 
+     * frames need to be repeated, and under `cnx->first_misc_frame` when other
+     * individual frames need repetition. */
+    
+    length = picoquic_predict_packet_header_length_multicast(
+        channel, channel->pkt_ctx);
+    packet->ptype = picoquic_packet_1rtt_protected;
+    packet->offset = length;
+    header_length = length;
+    packet->sequence_number = channel->pkt_ctx->send_sequence;
+    // packet->send_time = current_time;
+    bytes_next = bytes + length;
+
+    /* Compute the length before pacing block */
+    length = bytes_next - bytes;
+
+    if (channel->is_retired == 0) {
+        /* There are no frames yet that would be exempt from pacing control, but if there
+         * was they should be sent here. */
+
+        // TODO MC: Add pacing (flow) control condition here, maye using adapted version of `picoquic_is_sending_authorized_by_pacing()`
+            
+        /* Send here the frames that are not exempt from the pacing control,
+         * but are exempt for congestion control */
+        
+        // ENHANCE MC: Add congestion control condition here
+
+        /* Send here the frames that are subject to both congestion and pacing control. */
+        int no_data_to_send = 1;
+
+        // TODO MC: Adapt this method for mc channels
+        // bytes_next = picoquic_prepare_stream_and_datagrams(cnx, bytes_next, bytes_max,
+        //     UINT64_MAX, &more_data, &no_data_to_send, &ret);
+
+        length = bytes_next - bytes;
+    }
+
+    if (length <= header_length) {
+        length = 0;
+    }
+    
+    if (ret == 0 && length > header_length) {
+        /* Ensure that all packets are properly padded before being sent. */
+        // TODO MC: Adapt this method for multicast channels
+        // length = picoquic_pad_to_policy(cnx, bytes, length, (uint32_t)(send_buffer_min_max - checksum_overhead));
+    }
+
+    // TODO MC: Adapt this method for multicast channels
+    // picoquic_finalize_and_protect_packet(cnx, packet,
+    //     ret, length, header_length, checksum_overhead,
+    //     send_length, send_buffer, send_buffer_min_max);
+
+    if (*send_length > 0) {
+        SET_LAST_WAKE(channel->quic, PICOQUIC_SENDER);
+
     }
     return ret;
 }
@@ -4495,6 +4762,125 @@ int picoquic_program_app_wake_time(picoquic_cnx_t* cnx, uint64_t* next_wake_time
 }
 
 /* Prepare next packet to send, or nothing.. */
+int picoquic_prepare_packet_multicast(picoquic_multicast_channel_t* channel,
+    uint8_t* send_buffer, size_t send_buffer_max, size_t* send_length,
+    struct sockaddr_storage * p_addr_to, struct sockaddr_storage * p_addr_from, size_t* send_msg_size)
+{
+    int ret = 0;
+    picoquic_packet_t * packet = NULL;
+
+    *send_length = 0;
+
+    if (channel == NULL) {
+        ret = -1;
+    }
+
+    if (ret == 0 && send_buffer_max < PICOQUIC_ENFORCED_INITIAL_MTU) {
+        DBG_PRINTF("Invalid buffer size: %zu", send_buffer_max);
+        ret = -1;
+    }
+
+    if (ret == 0) {
+        /* Send the available packets */
+        if (send_msg_size != NULL) {
+            *send_msg_size = (p_addr_to->ss_family == AF_INET) ? PICOQUIC_INITIAL_MTU_IPV4 : PICOQUIC_INITIAL_MTU_IPV6;
+        }
+
+        if (send_buffer_max > *send_msg_size) {
+            // CHECK MC: large buffer: do something?
+        }
+
+        while (ret == 0)
+        {
+            /* Create a new packet, which may include several segments */
+            size_t packet_size = 0;
+            size_t packet_max = send_buffer_max - *send_length;
+            uint8_t* packet_buffer = send_buffer + *send_length;
+
+            if (send_msg_size != NULL && *send_msg_size > 0 && *send_length > 0 &&
+                packet_max > * send_msg_size) {
+                /* Consecutive packets should not be larger than first packet */
+                packet_max = *send_msg_size;
+            }
+
+            /* Create the segment that fit in the new packet */
+            /* Because in multicast channels only 1rtt packets can be transported, there is no coalescing */
+            size_t available = packet_max;
+            size_t segment_length = 0;
+
+            packet = picoquic_create_packet(channel->quic);
+
+            if (packet == NULL) {
+                ret = PICOQUIC_ERROR_MEMORY;
+                ret = -1;
+            }
+
+            if (ret == 0) {
+                // TODO MC: picoquic_prepare_segment_multicast
+                ret = picoquic_prepare_segment_multicast(channel, packet,
+                    packet_buffer + packet_size, available, &segment_length);
+            
+                if (ret == 0) {
+                    packet_size += segment_length;
+                    if (packet->length == 0) {
+                        /* Nothing more to send */
+                        picoquic_recycle_packet(channel->quic, packet);
+                    }
+                    else if (segment_length == 0) {
+                        DBG_PRINTF("Send bug: segment length = %zu, packet length = %zu\n", segment_length, packet->length);
+                    }
+                }
+                else {
+                    picoquic_recycle_packet(channel->quic, packet);
+                    packet = NULL;
+
+                    if (packet_size != 0) {
+                        ret = 0;
+                    }
+                }
+            }
+
+            if (packet_size > packet_max) {
+                DBG_PRINTF("BUFFER OVERFLOW? Packet size %zu larger than %zu", packet_size, packet_max);
+            }
+            if (packet_size > 0) {
+                if (packet_size > channel->max_mtu_sent) {
+                    channel->max_mtu_sent = packet_size;
+                }
+                channel->nb_packets_sent++;
+                /* if needed, log that the packet is sent */
+                if (p_addr_to != NULL && p_addr_from != NULL) {
+                    // ENHANCE MC: Add logging for sent multicast packets
+                    // picoquic_log_pdu(cnx, 0, current_time,
+                    //     (struct sockaddr*)p_addr_to, (struct sockaddr*)p_addr_from, packet_size);
+                }
+            }
+
+            /* Account for the bytes in the packet. */
+            *send_length += packet_size;
+
+            /* Check whether to keep coalescing multiple packets in the send buffer */
+            if (send_msg_size == NULL) {
+                break;
+            }
+            else if (packet_size > *send_msg_size) {
+                /* This can only happen for the first packet in a batch. */
+                *send_msg_size = packet_size;
+            }
+            else if (packet_size != *send_msg_size) {
+                // ENHANCE MC: Set congestion control variables, etc.
+                break;
+            }
+            else if (*send_length + *send_msg_size > send_buffer_max) {
+                break;
+            }
+        }
+    }
+
+    return ret;
+}
+
+/* Prepare next packet to send, or nothing.. */
 int picoquic_prepare_packet_ex(picoquic_cnx_t* cnx,
     uint64_t current_time, uint8_t* send_buffer, size_t send_buffer_max, size_t* send_length,
     struct sockaddr_storage * p_addr_to, struct sockaddr_storage * p_addr_from, int* if_index, size_t* send_msg_size)
@@ -4823,6 +5209,43 @@ int picoquic_prepare_next_packet_ex(picoquic_quic_t* quic,
                 if (p_last_cnx) {
                     *p_last_cnx = cnx;
                 }
+            }
+        }
+    }
+
+    return ret;
+}
+
+/* 
+ * Quic context level call.
+ * will send a packet to a multicast address 
+ */
+int picoquic_prepare_next_packet_multicast(picoquic_quic_t* quic,
+    uint8_t* send_buffer, size_t send_buffer_max, size_t* send_length,
+    struct sockaddr_storage* p_addr_to, struct sockaddr_storage* p_addr_from,
+    picoquic_multicast_channel_t** channel, size_t * send_msg_size)
+{
+    int ret = 0;
+
+    if (channel == NULL) {
+        *send_length = 0;
+        ret = -1;
+    }
+    else {
+        // TODO MC: picoquic_prepare_packet_multicast
+        ret = picoquic_prepare_packet_multicast(channel, send_buffer, send_buffer_max, send_length, p_addr_to, p_addr_from,
+             send_msg_size);
+
+        if (ret == PICOQUIC_ERROR_DISCONNECTED) {
+            ret = 0;
+
+            fprintf(stdout, "Closed.");
+
+            if (quic->F_log != NULL) {
+                fflush(quic->F_log);
+            } else {
+                // CHECK MC: Handle PICOQUIC_ERROR_DISCONNECTED
+                // picoquic_delete_cnx(cnx);
             }
         }
     }

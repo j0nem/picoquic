@@ -958,12 +958,13 @@ int picoquic_create_multicast_channel(picoquic_quic_t* quic, picoquic_multicast_
     // Only supports ipv4 channels for now
     new_channel->group_ip = *group_ipv4;
 
-    // TODO MC: Make configurable
+    // ENHANCE MC: Make configurable
     new_channel->header_protection_algorithm = PICOQUIC_AES_256_GCM_SHA384;
     new_channel->aead_algorithm = PICOQUIC_AES_256_GCM_SHA384;
     new_channel->hash_algorithm = PICOQUIC_SHA384;
     new_channel->max_rate = 20;
     new_channel->max_ack_delay = PICOQUIC_ACK_DELAY_MAX;
+    new_channel->quic = quic;
 
     // CLEAN MC: Remove if not needed
     // if (new_channel->mc_tls_ctx == NULL) {
@@ -3542,6 +3543,30 @@ void picoquic_remove_output_stream(picoquic_cnx_t* cnx, picoquic_stream_head_t *
     }
 }
 
+void picoquic_remove_output_stream_multicast(picoquic_multicast_channel_t* channel, picoquic_stream_head_t * stream)
+{
+    if (stream->is_output_stream) {
+        stream->is_output_stream = 0;
+
+        if (stream->previous_output_stream == NULL) {
+            channel->first_output_stream = stream->next_output_stream;
+        }
+        else {
+            stream->previous_output_stream->next_output_stream = stream->next_output_stream;
+        }
+
+        if (stream->next_output_stream == NULL) {
+            channel->last_output_stream = stream->previous_output_stream;
+        }
+        else {
+            stream->next_output_stream->previous_output_stream = stream->previous_output_stream;
+        }
+        stream->previous_output_stream = NULL;
+        stream->next_output_stream = NULL;
+    }
+}
+
+
 /* Reorder streams by priorities and rank.
  * A stream is deemed out of order if:
  * - the previous stream in the list has a higher priority, or
@@ -3656,6 +3681,11 @@ picoquic_stream_head_t* picoquic_create_stream(picoquic_cnx_t* cnx, uint64_t str
 void picoquic_delete_stream(picoquic_cnx_t * cnx, picoquic_stream_head_t* stream)
 {
     picosplay_delete(&cnx->stream_tree, stream);
+}
+
+void picoquic_delete_stream_multicast(picoquic_multicast_channel_t * channel, picoquic_stream_head_t* stream)
+{
+    picosplay_delete(&channel->stream_tree, stream);
 }
 
 int picoquic_mark_direct_receive_stream(picoquic_cnx_t* cnx, uint64_t stream_id, picoquic_stream_direct_receive_fn direct_receive_fn, void* direct_receive_ctx)
