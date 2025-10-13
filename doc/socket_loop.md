@@ -177,7 +177,8 @@ The API `picoquic_start_network_thread` is designed to be simple. It uses the de
 thread handling corresponding to the OS, such as `pthread` on Unix variants and
 `CreateThread` on Windows. Developers can substitute their own thread management functions
 by calling:
-```
+
+```c
 picoquic_network_thread_ctx_t* picoquic_start_custom_network_thread(
     picoquic_quic_t* quic,
     picoquic_packet_loop_param_t* param,
@@ -189,6 +190,7 @@ picoquic_network_thread_ctx_t* picoquic_start_custom_network_thread(
     void* loop_callback_ctx,
     int * ret);
 ```
+
 This call lets application supply their own functions for creating and deleting threads, and
 also for naming threads.
 

@@ -54,11 +54,11 @@ extern "C"
 #define PICOQUIC_MULTICAST_CLIENT_QLOG_DIR "./log";
 #define PICOQUIC_MULTICAST_SERVER_QLOG_DIR "./log";
 
-#define PICOQUIC_MULTICAST_BACKGROUND_MAX_FILES 32
+#define PICOQUIC_MULTICAST_SENDER_MAX_FILES 32
 
     int picoquic_multicast_client(char const *server_name, int server_port, char const *default_dir);
 
-    // int picoquic_multicast_background(char const *server_name, int server_port, char const *default_dir);
+    // int picoquic_multicast_sender(char const *server_name, int server_port, char const *default_dir);
 
     int picoquic_multicast_server(int server_port, const char *pem_cert, const char *pem_key, const char *served_file);
 

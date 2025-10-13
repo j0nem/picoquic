@@ -130,7 +130,7 @@ int multicast_server_open_file(multicast_server_ctx_t *server_ctx, multicast_ser
     datagram_ctx->is_name_read = 1;
 
     /* Verify the name, then try to open the file */
-    if (server_ctx->served_file + 1 > sizeof(file_path))
+    if (server_ctx->served_file_len + 1 > sizeof(file_path))
     {
         ret = PICOQUIC_MULTICAST_NAME_TOO_LONG_ERROR;
     }
@@ -223,7 +223,8 @@ int multicast_server_callback(picoquic_cnx_t *cnx,
 {
     int ret = 0;
     multicast_server_ctx_t *server_ctx = (multicast_server_ctx_t *)callback_ctx;
-    multicast_server_datagram_ctx_t *datagram_ctx = (multicast_server_datagram_ctx_t *)v_stream_ctx;
+    // CHECK MC: Use datagram context?
+    // multicast_server_datagram_ctx_t *datagram_ctx = (multicast_server_datagram_ctx_t *)v_stream_ctx;
 
     /* If this is the first reference to the connection, the application context is set
      * to the default value defined for the server. This default value contains the pointer
@@ -442,6 +443,8 @@ int multicast_server_callback(picoquic_cnx_t *cnx,
 
 int picoquic_multicast_server(int server_port, const char *server_cert, const char *server_key, const char *served_file)
 {
+    // TODO MC: Start background thread mc sender server in this method somewhere
+
     /* Start: start the QUIC process with cert and key files */
     int ret = 0;
     picoquic_quic_t *quic = NULL;
@@ -487,7 +490,7 @@ int picoquic_multicast_server(int server_port, const char *server_cert, const ch
         struct sockaddr_storage group_ip;
         picoquic_store_text_addr(&group_ip, PICOQUIC_MULTICAST_GROUP_IP, PICOQUIC_MULTICAST_GROUP_PORT);
 
-        picoquic_create_multicast_channel(quic, 0, &default_context.mc_channel, PICOQUIC_MULTICAST_MAX_CLIENTS, &group_ip, NULL);
+        picoquic_create_multicast_channel(quic, &default_context.mc_channel, PICOQUIC_MULTICAST_MAX_CLIENTS, &group_ip, NULL);
     }
 
     /* Wait for packets using the wait loop provided in the library.

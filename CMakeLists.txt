@@ -408,7 +408,7 @@ if (BUILD_MULTICAST)
         multicast_sample/multicast.c
         multicast_sample/multicast_server.c
         multicast_sample/multicast_client.c
-        multicast_sample/multicast_background.c
+        multicast_sample/multicast_sender.c
         picoquic/multicast.c)
     target_link_libraries(multicast
         PUBLIC

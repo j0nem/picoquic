@@ -83,19 +83,6 @@ int main(int argc, char** argv)
             exit_code = picoquic_multicast_client(argv[2], server_port, argv[4]);
         }
     }
-
-    // CHECK MC: Implement or remove background function
-    // else if (strcmp(argv[1], "background") == 0) {
-    //     if (argc != 5) {
-    //         usage(argv[0]);
-    //     }
-    //     else {
-    //         int server_port = get_port(argv[0], argv[3]);
-
-    //         exit_code = picoquic_multicast_background(argv[2], server_port, argv[4]);
-    //     }
-    // }
-
     else if (strcmp(argv[1], "server") == 0) {
         if (argc != 6) {
             usage(argv[0]);

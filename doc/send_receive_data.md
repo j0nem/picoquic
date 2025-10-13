@@ -90,7 +90,7 @@ With the just in time API, the application:
 to send data on the stream.
 
 - services the callback by reserving a buffer using the
-API "picoquic_provide_stream_data_buffer", and copying the
+API `picoquic_provide_stream_data_buffer`, and copying the
 application data in that buffer.
 
 The APIs are documented in "picoquic.h":

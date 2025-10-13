@@ -39,8 +39,6 @@
  * ID (in hexa), with the suffix ".client.qlog".
  */
 
-// CHECK MC: Implement or remove this file
-
 #include <stdint.h>
 #include <stdio.h>
 #include <picoquic.h>
@@ -88,8 +86,8 @@
   * picoquic stack.
   */
 
-typedef struct st_multicast_background_stream_ctx_t {
-    struct st_multicast_background_stream_ctx_t* next_stream;
+typedef struct st_multicast_sender_stream_ctx_t {
+    struct st_multicast_sender_stream_ctx_t* next_stream;
     size_t file_rank;
     uint64_t stream_id;
     size_t name_length;
@@ -101,36 +99,36 @@ typedef struct st_multicast_background_stream_ctx_t {
     unsigned int is_file_open : 1;
     unsigned int is_stream_reset : 1;
     unsigned int is_stream_finished : 1;
-} multicast_background_stream_ctx_t;
+} multicast_sender_stream_ctx_t;
 
-typedef struct st_multicast_background_ctx_t {
+typedef struct st_multicast_sender_ctx_t {
     unsigned int is_closing : 1;
     unsigned int is_closing_requested : 1;
     picoquic_cnx_t* cnx;
     char const* default_dir;
     char const** file_names;
-    multicast_background_stream_ctx_t* first_stream;
-    multicast_background_stream_ctx_t* last_stream;
+    multicast_sender_stream_ctx_t* first_stream;
+    multicast_sender_stream_ctx_t* last_stream;
     int nb_files;
     int nb_files_processed;
     int nb_files_received;
     int nb_files_failed;
     int is_disconnected;
-} multicast_background_ctx_t;
+} multicast_sender_ctx_t;
 
-static int multicast_background_create_stream(picoquic_cnx_t* cnx,
-    multicast_background_ctx_t* client_ctx, int file_rank)
+static int multicast_sender_create_stream(picoquic_cnx_t* cnx,
+    multicast_sender_ctx_t* client_ctx, int file_rank)
 {
     int ret = 0;
-    multicast_background_stream_ctx_t* stream_ctx = (multicast_background_stream_ctx_t*)
-        malloc(sizeof(multicast_background_stream_ctx_t));
+    multicast_sender_stream_ctx_t* stream_ctx = (multicast_sender_stream_ctx_t*)
+        malloc(sizeof(multicast_sender_stream_ctx_t));
 
     if (stream_ctx == NULL) {
         fprintf(stdout, "Memory Error, cannot create stream for file number %d\n", (int)file_rank);
         ret = -1;
     }
     else {
-        memset(stream_ctx, 0, sizeof(multicast_background_stream_ctx_t));
+        memset(stream_ctx, 0, sizeof(multicast_sender_stream_ctx_t));
         if (client_ctx->first_stream == NULL) {
             client_ctx->first_stream = stream_ctx;
             client_ctx->last_stream = stream_ctx;
@@ -154,9 +152,9 @@ static int multicast_background_create_stream(picoquic_cnx_t* cnx,
     return ret;
 }
 
-static void multicast_background_report(multicast_background_ctx_t* client_ctx)
+static void multicast_sender_report(multicast_sender_ctx_t* client_ctx)
 {
-    multicast_background_stream_ctx_t* stream_ctx = client_ctx->first_stream;
+    multicast_sender_stream_ctx_t* stream_ctx = client_ctx->first_stream;
 
     while (stream_ctx != NULL) {
         char const* status;
@@ -198,9 +196,9 @@ static void multicast_background_report(multicast_background_ctx_t* client_ctx)
     }
 }
 
-static void multicast_background_free_context(multicast_background_ctx_t* client_ctx)
+static void multicast_sender_free_context(multicast_sender_ctx_t* client_ctx)
 {
-    multicast_background_stream_ctx_t* stream_ctx;
+    multicast_sender_stream_ctx_t* stream_ctx;
 
     while ((stream_ctx = client_ctx->first_stream) != NULL) {
         client_ctx->first_stream = stream_ctx->next_stream;
@@ -213,13 +211,13 @@ static void multicast_background_free_context(multicast_background_ctx_t* client
 }
 
 
-int multicast_background_callback(picoquic_cnx_t* cnx,
+int multicast_sender_callback(picoquic_multicast_channel_t* channel,
     uint64_t stream_id, uint8_t* bytes, size_t length,
     picoquic_call_back_event_t fin_or_event, void* callback_ctx, void* v_stream_ctx)
 {
     int ret = 0;
-    multicast_background_ctx_t* client_ctx = (multicast_background_ctx_t*)callback_ctx;
-    multicast_background_stream_ctx_t* stream_ctx = (multicast_background_stream_ctx_t*)v_stream_ctx;
+    multicast_sender_ctx_t* client_ctx = (multicast_sender_ctx_t*)callback_ctx;
+    multicast_sender_stream_ctx_t* stream_ctx = (multicast_sender_stream_ctx_t*)v_stream_ctx;
 
     if (client_ctx == NULL) {
         /* This should never happen, because the callback context for the client is initialized 
@@ -304,7 +302,7 @@ int multicast_background_callback(picoquic_cnx_t* cnx,
             break;
         case picoquic_callback_stop_sending: /* Should not happen, treated as reset */
             /* Mark stream as abandoned, close the file, etc. */
-            picoquic_reset_stream(cnx, stream_id, 0);
+            // picoquic_reset_stream(cnx, stream_id, 0);
             /* Fall through */
         case picoquic_callback_stream_reset: /* Server reset stream #x */
             if (stream_ctx == NULL) {
@@ -317,7 +315,7 @@ int multicast_background_callback(picoquic_cnx_t* cnx,
                 return -1;
             }
             else {
-                stream_ctx->remote_error = picoquic_get_remote_stream_error(cnx, stream_id);
+                // stream_ctx->remote_error = picoquic_get_remote_stream_error(cnx, stream_id);
                 stream_ctx->is_stream_reset = 1;
                 client_ctx->nb_files_failed++;
             }
@@ -327,7 +325,7 @@ int multicast_background_callback(picoquic_cnx_t* cnx,
         case picoquic_callback_application_close: /* Received application close */
             client_ctx->is_disconnected = 1;
             /* Remove the application callback */
-            picoquic_set_callback(cnx, NULL, NULL);
+            // picoquic_set_callback(cnx, NULL, NULL);
             break;
         case picoquic_callback_version_negotiation:
             /* The client did not get the right version.
@@ -394,18 +392,17 @@ int multicast_background_callback(picoquic_cnx_t* cnx,
     return ret;
 }
 
-/* Prepare the context used by the background client.:
+/* Prepare the context used by the multicast sender client:
  * - Create the QUIC context.
- * - Open the sockets
+ * - Open the socket
  * - Find the server's address
- * - Initialize the client context and create a client connection.
+ * - Prepare the multicast channel
  */
-static int multicast_background_init(char const* server_name, int server_port, char const* default_dir,
-    char const* ticket_store_filename, char const* token_store_filename,
-    struct sockaddr_storage * server_address, picoquic_quic_t** quic, picoquic_cnx_t** cnx, multicast_background_ctx_t *client_ctx)
+static int multicast_sender_init(char const* server_name, int server_port, char const* default_dir,
+    struct sockaddr_storage * server_address, picoquic_quic_t** quic, picoquic_cnx_t** cnx, multicast_sender_ctx_t *sender_ctx,
+    picoquic_multicast_channel_t* channel)
 {
     int ret = 0;
-    char const* sni = PICOQUIC_MULTICAST_SNI;
     char const* qlog_dir = PICOQUIC_MULTICAST_CLIENT_QLOG_DIR;
     uint64_t current_time = picoquic_current_time();
 
@@ -415,83 +412,42 @@ static int multicast_background_init(char const* server_name, int server_port, c
     /* Get the server's address */
     if (ret == 0) {
         int is_name = 0;
+        sender_ctx->default_dir = default_dir;
 
         ret = picoquic_get_server_address(server_name, server_port, server_address, &is_name);
         if (ret != 0) {
             fprintf(stderr, "Cannot get the IP address for <%s> port <%d>", server_name, server_port);
         }
-        else if (is_name) {
-            sni = server_name;
-        }
     }
 
-    /* Create a QUIC context. It could be used for many connections, but in this multicast we
-     * will use it for just one connection.
-     * The multicast code exercises just a small subset of the QUIC context configuration options:
-     * - use files to store tickets and tokens in order to manage retry and 0-RTT
-     * - set the congestion control algorithm to BBR
+    /* Create a QUIC context and:
      * - enable logging of encryption keys for wireshark debugging.
      * - instantiate a binary log option, and log all packets.
      */
     if (ret == 0) {
         *quic = picoquic_create(1, NULL, NULL, NULL, PICOQUIC_MULTICAST_ALPN, NULL, NULL,
             NULL, NULL, NULL, current_time, NULL,
-            ticket_store_filename, NULL, 0);
+            NULL, NULL, 0);
 
         if (*quic == NULL) {
             fprintf(stderr, "Could not create quic context\n");
             ret = -1;
         }
         else {
-            if (picoquic_load_retry_tokens(*quic, token_store_filename) != 0) {
-                fprintf(stderr, "No token file present. Will create one as <%s>.\n", token_store_filename);
-            }
-
-            picoquic_set_default_congestion_algorithm(*quic, picoquic_bbr_algorithm);
-
             picoquic_set_key_log_file_from_env(*quic);
             picoquic_set_qlog(*quic, qlog_dir);
             picoquic_set_log_level(*quic, 1);
         }
     }
-    /* Initialize the callback context and create the connection context.
-     * We use minimal options on the client side, keeping the transport
-     * parameter values set by default for picoquic. This could be fixed later.
-     */
-
+    /* Initialize the callback context */
     if (ret == 0) {
-        client_ctx->default_dir = default_dir;
+        char text1[256];
+        printf("Prepare multicast channel for group ip %s\n", 
+            picoquic_addr_text((struct sockaddr*)&channel->group_ip, text1, sizeof(text1))
+        );
 
-        printf("Starting connection to %s, port %d\n", server_name, server_port);
-
-        /* Create a client connection */
-        *cnx = picoquic_create_cnx(*quic, picoquic_null_connection_id, picoquic_null_connection_id,
-            (struct sockaddr*)server_address, current_time, 0, sni, PICOQUIC_MULTICAST_ALPN, 1);
-
-        if (*cnx == NULL) {
-            fprintf(stderr, "Could not create connection context\n");
-            ret = -1;
-        }
-        else {
-            /* Document connection in client's context */
-            client_ctx->cnx = *cnx;
-            /* Set the client callback context */
-            picoquic_set_callback(*cnx, multicast_background_callback, client_ctx);
-            /* Client connection parameters could be set here, before starting the connection. */
-            ret = picoquic_start_client_cnx(*cnx);
-            if (ret < 0) {
-                fprintf(stderr, "Could not activate connection\n");
-            }
-            else {
-                /* Printing out the initial CID, which is used to identify log files */
-                picoquic_connection_id_t icid = picoquic_get_initial_cnxid(*cnx);
-                printf("Initial connection ID: ");
-                for (uint8_t i = 0; i < icid.id_len; i++) {
-                    printf("%02x", icid.id[i]);
-                }
-                printf("\n");
-            }
-        }
+        /* Set the callback context */
+        picoquic_set_callback_multicast(channel, multicast_sender_callback, sender_ctx);
     }
 
     return ret;
@@ -519,14 +475,12 @@ static int multicast_background_init(char const* server_name, int server_port, c
 *   updated by the UI thread.
 * This is implemented in the "multicast process wakeup" function.
 */
-
-
-static int multicast_background_wakeup(multicast_background_ctx_t* client_ctx)
+static int multicast_sender_wakeup(multicast_sender_ctx_t* client_ctx)
 {
     int ret = 0;
 
     while (client_ctx->nb_files > client_ctx->nb_files_processed) {
-        ret = multicast_background_create_stream(client_ctx->cnx, client_ctx, client_ctx->nb_files_processed);
+        ret = multicast_sender_create_stream(client_ctx->cnx, client_ctx, client_ctx->nb_files_processed);
         if (ret < 0) {
             fprintf(stderr, "\nCould not initiate stream for file #%d, %s\n", 
                 client_ctx->nb_files_processed,
@@ -543,11 +497,11 @@ static int multicast_background_wakeup(multicast_background_ctx_t* client_ctx)
     return ret;
 }
 
-static int multicast_background_loop_cb(picoquic_quic_t* quic, picoquic_packet_loop_cb_enum cb_mode, 
+static int multicast_sender_loop_cb(picoquic_quic_t* quic, picoquic_packet_loop_cb_enum cb_mode, 
     void* callback_ctx, void * callback_arg)
 {
     int ret = 0;
-    multicast_background_ctx_t* client_ctx = (multicast_background_ctx_t*)callback_ctx;
+    multicast_sender_ctx_t* client_ctx = (multicast_sender_ctx_t*)callback_ctx;
 
     if (client_ctx == NULL) {
         ret = PICOQUIC_ERROR_UNEXPECTED_ERROR;
@@ -557,7 +511,7 @@ static int multicast_background_loop_cb(picoquic_quic_t* quic, picoquic_packet_l
         case picoquic_packet_loop_ready:
             break;
         case picoquic_packet_loop_wake_up:
-            ret = multicast_background_wakeup(client_ctx);
+            ret = multicast_sender_wakeup(client_ctx);
             break;
         case picoquic_packet_loop_after_receive:
             break;
@@ -576,15 +530,15 @@ static int multicast_background_loop_cb(picoquic_quic_t* quic, picoquic_packet_l
     return ret;
 }
 
-/* Background client.
+/* Multicast sender server.
 */
-int picoquic_multicast_background(char const* server_name, int server_port, char const* default_dir)
+int picoquic_multicast_sender(char const* server_name, int server_port, char const* default_dir, picoquic_multicast_channel_t* channel)
 {
     int ret = 0;
     struct sockaddr_storage server_address;
     picoquic_quic_t* quic = NULL;
     picoquic_cnx_t* cnx = NULL;
-    multicast_background_ctx_t client_ctx = { 0 };
+    multicast_sender_ctx_t sender_ctx = { 0 };
     char const* ticket_store_filename = PICOQUIC_MULTICAST_CLIENT_TICKET_STORE;
     char const* token_store_filename = PICOQUIC_MULTICAST_CLIENT_TOKEN_STORE;
     picoquic_network_thread_ctx_t* thread_ctx = NULL;
@@ -592,34 +546,35 @@ int picoquic_multicast_background(char const* server_name, int server_port, char
     int wait_cycles = 0;
     int wait_limit_sec = 1; /* By default, wait 1 second until completion */
     picoquic_packet_loop_param_t param = { 0 };
-    char const* file_names[PICOQUIC_MULTICAST_BACKGROUND_MAX_FILES];
+    char const* file_names[PICOQUIC_MULTICAST_SENDER_MAX_FILES];
     char buf[256];
 
-    ret = multicast_background_init(server_name, server_port, default_dir,
-        ticket_store_filename, token_store_filename,
-        &server_address, &quic, &cnx, &client_ctx);
+    ret = multicast_sender_init(server_name, server_port, default_dir,
+        &server_address, &quic, &cnx, &sender_ctx, channel);
 
     /* Initialize the files field in the context to an empty vector*/
-    client_ctx.file_names = file_names;
+    sender_ctx.file_names = file_names;
 
     /* set the thread parameters */
     param.local_af = server_address.ss_family;
 
     /* Set the multicast channel for this thread */
-    // TODO MC: Set it correctly
-    param.multicast_channel = NULL;
+    param.multicast_channel = channel;
 
     /* Start the background thread. */
     thread_ctx = picoquic_start_custom_network_thread_ex(quic, &param,
         picoquic_internal_thread_create, picoquic_internal_thread_delete,
-        picoquic_internal_thread_setname,"multicast_background", 
+        picoquic_internal_thread_setname, "multicast_sender", 
         picoquic_packet_loop_multicast_send,
-        multicast_background_loop_cb,
-        &client_ctx, &thread_ret);
+        multicast_sender_loop_cb,
+        &sender_ctx, &thread_ret);
+
+    // TODO MC: Rewrite the background application code so that it represents server functionality 
+    // (currently client)
 
     /* Loop on the UI until the client calls it quit. */
-    while (!client_ctx.is_closing_requested && !client_ctx.is_disconnected &&
-        client_ctx.nb_files < PICOQUIC_MULTICAST_BACKGROUND_MAX_FILES) {
+    while (!sender_ctx.is_closing_requested && !sender_ctx.is_disconnected &&
+        sender_ctx.nb_files < PICOQUIC_MULTICAST_SENDER_MAX_FILES) {
         size_t line_size = 0;
         printf("\nNext file (or empty line to quit)?\n");
         if (fgets(buf, sizeof(buf), stdin) != NULL) {
@@ -642,13 +597,13 @@ int picoquic_multicast_background(char const* server_name, int server_port, char
             if (f_name == NULL) {
                 /* Error! Cannot continue */
                 printf("Not enough memory for name, closing.\n");
-                client_ctx.is_closing_requested = 1;
+                sender_ctx.is_closing_requested = 1;
             }
             else {
                 memcpy(f_name, buf, line_size);
                 f_name[line_size] = 0;
-                file_names[client_ctx.nb_files] = f_name;
-                client_ctx.nb_files++;
+                file_names[sender_ctx.nb_files] = f_name;
+                sender_ctx.nb_files++;
             }
         }
         /* wakeup the background thread */
@@ -656,18 +611,18 @@ int picoquic_multicast_background(char const* server_name, int server_port, char
     }
 
     /* Wait until all files have been received.
-    * If this was not just a multicast, we would develop some code
+    * we would develop some code
     * to wait until the completion of the transport. Here,
     * we simply resort to active polling.
      */
     while (!thread_ctx->thread_is_closed) {
-        if (client_ctx.is_disconnected) {
+        if (sender_ctx.is_disconnected) {
             printf("Disconnected.\n");
             break;
         }
-        if ((client_ctx.nb_files_received + client_ctx.nb_files_failed) >= client_ctx.nb_files &&
-            !client_ctx.is_closing_requested) {
-            client_ctx.is_closing_requested = 1;
+        if ((sender_ctx.nb_files_received + sender_ctx.nb_files_failed) >= sender_ctx.nb_files &&
+            !sender_ctx.is_closing_requested) {
+            sender_ctx.is_closing_requested = 1;
             picoquic_wake_up_network_thread(thread_ctx);
         }
         else {
@@ -699,7 +654,7 @@ int picoquic_multicast_background(char const* server_name, int server_port, char
     thread_ctx = NULL;
 
     /* Done. At this stage, we could print out statistics, etc. */
-    multicast_background_report(&client_ctx);
+    multicast_sender_report(&sender_ctx);
 
     /* Save tickets and tokens, and free the QUIC context */
     if (quic != NULL) {
@@ -712,13 +667,13 @@ int picoquic_multicast_background(char const* server_name, int server_port, char
         picoquic_free(quic);
     }
     /* Free the file names */
-    for (int i = 0; i < client_ctx.nb_files; i++) {
-        if (client_ctx.file_names[i] != NULL) {
-            free((void*)client_ctx.file_names[i]);
+    for (int i = 0; i < sender_ctx.nb_files; i++) {
+        if (sender_ctx.file_names[i] != NULL) {
+            free((void*)sender_ctx.file_names[i]);
         }
     }
     /* Free the Client context */
-    multicast_background_free_context(&client_ctx);
+    multicast_sender_free_context(&sender_ctx);
 
     return ret;
 }
