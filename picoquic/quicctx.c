@@ -4656,6 +4656,13 @@ void picoquic_set_callback(picoquic_cnx_t* cnx,
     cnx->callback_ctx = callback_ctx;
 }
 
+void picoquic_set_callback_multicast(picoquic_multicast_channel_t* channel,
+    picoquic_stream_data_mc_cb_fn callback_fn, void* callback_ctx)
+{
+    channel->callback_fn = callback_fn;
+    channel->callback_ctx = callback_ctx;
+}
+
 picoquic_stream_data_cb_fn picoquic_get_default_callback_function(picoquic_quic_t* quic)
 {
     return quic->default_callback_fn;

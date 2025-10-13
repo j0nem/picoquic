@@ -766,8 +766,6 @@ void* picoquic_packet_loop_multicast_send(void* v_ctx)
     picoquic_packet_loop_cb_fn loop_callback = thread_ctx->loop_callback;
     void* loop_callback_ctx = thread_ctx->loop_callback_ctx;
     int ret = 0;
-    struct sockaddr_storage addr_from;
-    struct sockaddr_storage addr_to;
 
     uint8_t* send_buffer = NULL;
     size_t send_length = 0;
@@ -776,11 +774,7 @@ void* picoquic_packet_loop_multicast_send(void* v_ctx)
     size_t* send_msg_ptr = NULL;
     picoquic_socket_ctx_t s_ctx[4];
     int nb_sockets = 0;
-    int nb_sockets_available = 0;
     picoquic_packet_loop_options_t options = { 0 };
-    packet_loop_system_call_duration_t sc_duration = { 0 };
-
-    int is_wake_up_event;
 
     if (thread_ctx->thread_name != NULL) {
         thread_ctx->thread_setname_fn(thread_ctx->thread_name);
@@ -812,8 +806,6 @@ void* picoquic_packet_loop_multicast_send(void* v_ctx)
     }
 
     if (ret == 0) {
-        nb_sockets_available = nb_sockets;
-
         // Only one socket supported by now
         if (nb_sockets > 1) {
             ret = -1;
@@ -838,10 +830,11 @@ void* picoquic_packet_loop_multicast_send(void* v_ctx)
 
     /* Start of Packet Loop */
     while (ret == 0 && !thread_ctx->thread_should_close) {
-        if (is_wake_up_event) {
-            ret = loop_callback(quic, picoquic_packet_loop_wake_up, loop_callback_ctx, NULL);
-        }
-        else {
+        // CHECK MC: Need wake up event?
+        // if (is_wake_up_event) {
+        //     ret = loop_callback(quic, picoquic_packet_loop_wake_up, loop_callback_ctx, NULL);
+        // }
+        // else {
             size_t bytes_sent = 0;
             size_t nb_packets_sent = 0;
 
@@ -856,7 +849,7 @@ void* picoquic_packet_loop_multicast_send(void* v_ctx)
                 // TODO MC: picoquic_prepare_next_packet_multicast
                 ret = picoquic_prepare_next_packet_multicast(quic,
                     send_buffer, send_buffer_size, &send_length,
-                    &peer_addr, &local_addr, &mc_channel,
+                    &peer_addr, &local_addr, mc_channel,
                     send_msg_ptr);
 
                 if (ret != 0 || send_length <= 0) { 
@@ -873,10 +866,6 @@ void* picoquic_packet_loop_multicast_send(void* v_ctx)
                 }
                 
                 SOCKET_TYPE send_socket = s_ctx[0].fd;
-                uint16_t send_port = (peer_addr.ss_family == AF_INET) ?
-                    ((struct sockaddr_in*)&local_addr)->sin_port :
-                    ((struct sockaddr_in6*)&local_addr)->sin6_port;
-
                 bytes_sent += send_length;
 
                 if (send_socket == INVALID_SOCKET) {
@@ -944,7 +933,7 @@ void* picoquic_packet_loop_multicast_send(void* v_ctx)
             if (ret == 0 && loop_callback != NULL) {
                 ret = loop_callback(quic, picoquic_packet_loop_after_send, loop_callback_ctx, &bytes_sent);
             }
-        }
+        // }
     }
 
     thread_ctx->thread_is_ready = 0;
@@ -1472,7 +1461,6 @@ void picoquic_internal_thread_delete(void** v_thread_id)
     picoquic_delete_thread((picoquic_thread_t *)v_thread_id);
 }
 
-// TODO MC: Maybe reset this to initial function and set custom packet loop function via packet_loop_params
 picoquic_network_thread_ctx_t* picoquic_start_custom_network_thread_ex(picoquic_quic_t* quic, picoquic_packet_loop_param_t* param,
     picoquic_custom_thread_create_fn thread_create_fn, picoquic_custom_thread_delete_fn thread_delete_fn,
     picoquic_custom_thread_setname_fn thread_setname_fn, char const* thread_name,

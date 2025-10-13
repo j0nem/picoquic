@@ -456,6 +456,10 @@ typedef int (*picoquic_stream_data_cb_fn)(picoquic_cnx_t* cnx,
     uint64_t stream_id, uint8_t* bytes, size_t length,
     picoquic_call_back_event_t fin_or_event, void* callback_ctx, void * stream_ctx);
 
+typedef int (*picoquic_stream_data_mc_cb_fn)(picoquic_multicast_channel_t* channel,
+    uint64_t stream_id, uint8_t* bytes, size_t length,
+    picoquic_call_back_event_t fin_or_event, void* callback_ctx, void * stream_ctx);
+
 /* Callback from the TLS stack upon receiving a list of proposed ALPN in the Client Hello
  * The stack passes a <list> of io <count> vectors (base, len) each containing a proposed
  * ALPN. The implementation returns the index of the selected ALPN, or a value >= count
@@ -1182,6 +1186,9 @@ int picoquic_is_cnx_backlog_empty(picoquic_cnx_t* cnx);
 void picoquic_set_callback(picoquic_cnx_t* cnx,
     picoquic_stream_data_cb_fn callback_fn, void* callback_ctx);
 
+void picoquic_set_callback_multicast(picoquic_multicast_channel_t* channel,
+    picoquic_stream_data_mc_cb_fn callback_fn, void* callback_ctx);
+
 picoquic_stream_data_cb_fn picoquic_get_default_callback_function(picoquic_quic_t * quic);
 
 void * picoquic_get_default_callback_context(picoquic_quic_t * quic);
@@ -1243,7 +1250,7 @@ int picoquic_incoming_packet_ex(
 int picoquic_prepare_next_packet_multicast(picoquic_quic_t* quic,
     uint8_t* send_buffer, size_t send_buffer_max, size_t* send_length,
     struct sockaddr_storage* p_addr_to, struct sockaddr_storage* p_addr_from,
-    picoquic_multicast_channel_t** channel, size_t * send_msg_size);
+    picoquic_multicast_channel_t* channel, size_t * send_msg_size);
 
 int picoquic_prepare_next_packet_ex(picoquic_quic_t* quic, 
     uint64_t current_time, uint8_t* send_buffer, size_t send_buffer_max, size_t* send_length, 

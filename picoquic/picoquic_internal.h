@@ -611,129 +611,6 @@ typedef int (*picoquic_autoqlog_fn)(picoquic_cnx_t * cnx);
  */
 typedef int (*picoquic_performance_log_fn)(picoquic_quic_t* quic, picoquic_cnx_t* cnx, int should_delete);
 
-/* Multicast channels 
- */
-
-typedef struct st_picoquic_multicast_channel_t {
-    picoquic_quic_t* quic;
-    picoquic_multicast_channel_id_t channel_id;
-    struct sockaddr_storage source_ip; // CHECK MC: This is currently zero in server mode, maybe change if needed later
-    struct sockaddr_storage group_ip;
-    uint16_t header_protection_algorithm;
-    uint16_t aead_algorithm;
-    picoquic_multicast_header_secret_t header_secret;
-    picoquic_multicast_aead_secret_t ** aead_secrets;
-    int nb_aead_secrets;
-    picoquic_crypto_context_t* crypto_context;
-    uint16_t hash_algorithm;
-    uint64_t max_rate;
-    uint64_t max_ack_delay;
-    int is_retired;
-
-    int client_mode;     // 0: sending (server), 1: receiving (client)
-    int socket_open;     // bool, if a socket is opened
-    SOCKET_TYPE fd;      // fd of used local socket (client: via mcrx)
-    uint16_t local_port; // port of used local socket (server: sending, client: receiving - via mcrx)
-
-    int is_datagram_ready;
-    uint64_t nb_packets_sent;
-    size_t max_mtu_sent;
-    size_t send_mtu;
-    picoquic_packet_context_t* pkt_ctx;
-
-    /* Management of streams */
-    picosplay_tree_t stream_tree;
-    picoquic_stream_head_t * first_output_stream;
-    picoquic_stream_head_t * last_output_stream;
-    uint64_t high_priority_stream_id;
-    uint64_t next_stream_id[4];
-    // uint64_t priority_limit_for_bypass; /* Bypass CC if dtagram or stream priority lower than this, 0 means never */
-    // picoquic_pacing_t priority_bypass_pacing;
-
-    /* Repeat queue contains packets with data frames that should be
-     * sent according to priority when congestion window opens. */
-    picosplay_tree_t queue_data_repeat_tree;
-
-    /* Management of datagram queue */
-    unsigned int is_datagram_ready : 1; /* Active polling for datagrams */
-    picoquic_misc_frame_header_t* first_datagram;
-    picoquic_misc_frame_header_t* last_datagram;
-    uint64_t datagram_priority;
-    int datagram_conflicts_count;
-    int datagram_conflicts_max;
-} picoquic_multicast_channel_t;
-
-// State of a multicast channel in a cnx (with buffers for extensions):
-//   00..09 -> Pending join
-//   10     -> Join complete
-//   11..19 -> Pending leave
-//   20     -> Leave complete
-//   21..29 -> Pending retire
-//   30     -> Retire complete
-typedef enum {
-    // The channel was not yet announced and is scheduled to be announced on this connection
-    picoquic_mc_state_announce_scheduled = 0,
-
-    // After receiving (client) or sending (server) MC_ANNOUNCE
-    picoquic_mc_state_announced = 2,
-
-    // Ater receiving (client) or sending (server) MC_JOIN frame
-    picoquic_mc_state_join_pending = 5, 
-
-    // After sending (client) or receiving (server) MC_STATE(Joined) 
-    picoquic_mc_state_join_attempted = 8,
-
-    // After sending (client) or receiving (server) MC_ACK 
-    // -> acknowledging first data on the multicast channel
-    picoquic_mc_state_join_confirmed = 10,
-
-    // After sending/receiving MC_LEAVE
-    picoquic_mc_state_leave_pending = 15,
-
-    // After sending (client) or receiving (server) MC_STATE(Left)
-    // OR MC_STATE(Declined Join)
-    picoquic_mc_state_left = 20,
-
-    // After receiving (client) or sending (server) MC_RETIRE
-    picoquic_mc_state_retire_pending = 25,
-
-    // After sending (client) or receiving (server) MC_STATE(Retired)
-    picoquic_mc_state_retired = 30,
-
-    // When an unrecoverable error occured
-    // (this only refers to the channel usage in that connection, the channel itself may still be intact!)
-    picoquic_mc_state_error = 99
-} picoquic_mc_state_enum;
-
-typedef struct st_picoquic_mc_channel_in_cnx_t { // ENHANCE MC: Maybe add pointer back to cnx here for convenience?
-    picoquic_multicast_channel_t* channel;
-    picoquic_mc_state_enum state;
-    int key_available;
-    int state_frame_available;
-    int limits_frame_available;
-    uint64_t latest_key_sequence_available;
-    uint64_t latest_state_sequence_available;
-    uint64_t latest_limits_sequence_available;
-    struct mcrx_subscription* mcrx_subscription;
-
-    // the following is used on server only:
-    int mc_announce_acked;
-    int mc_join_acked;
-    int mc_leave_acked;
-    int mc_retire_acked;
-    int key_acked;                      // At least one MC_KEY frame was acked
-    uint64_t latest_key_sequence_acked;
-
-    // the following is used on client only:
-    picoquic_mc_state_enum state_scheduled;
-    picoquic_mc_state_frame_enum state_frame_scheduled;
-    int state_reason_scheduled;         // reason code for scheduled state frame, could also be different from picoquic_mc_state_reason_enum choices
-    int mc_state_acked;                 // At least one MC_STATE frame was acked
-    int mc_limits_acked;                // At least one MC_LIMITS frame was acked
-    uint64_t latest_state_sequence_acked;
-    uint64_t latest_limits_sequence_acked;
-} picoquic_mc_channel_in_cnx_t;
-
 /* QUIC context, defining the tables of connections,
  * open sockets, etc.
  */
@@ -1376,6 +1253,138 @@ typedef struct st_picoquic_crypto_context_t {
     void* pn_enc; /* Used for PN encryption */
     void* pn_dec; /* Used for PN decryption */
 } picoquic_crypto_context_t;
+
+/* Multicast channels 
+ */
+
+typedef struct st_picoquic_multicast_channel_t {
+    picoquic_quic_t* quic;
+    picoquic_multicast_channel_id_t channel_id;
+    struct sockaddr_storage source_ip; // CHECK MC: This is currently zero in server mode, maybe change if needed later
+    struct sockaddr_storage group_ip;
+    uint16_t header_protection_algorithm;
+    uint16_t aead_algorithm;
+    picoquic_multicast_header_secret_t header_secret;
+    picoquic_multicast_aead_secret_t ** aead_secrets;
+    int nb_aead_secrets;
+    picoquic_crypto_context_t crypto_context; 
+    uint16_t hash_algorithm;
+    uint64_t max_rate;
+    uint64_t max_ack_delay;
+    int is_retired;
+
+    int client_mode;     // 0: sending (server), 1: receiving (client)
+    int socket_open;     // bool, if a socket is opened
+    SOCKET_TYPE fd;      // fd of used local socket (client: via mcrx)
+    uint16_t local_port; // port of used local socket (server: sending, client: receiving - via mcrx)
+
+    /* Call back function and context */
+    picoquic_stream_data_mc_cb_fn callback_fn;
+    void* callback_ctx;
+
+    uint64_t nb_packets_sent;
+    size_t max_mtu_sent;
+    size_t send_mtu;
+    uint64_t data_sent;
+    uint64_t bytes_sent;
+    picoquic_packet_context_t pkt_ctx; /* Packet context */
+    unsigned int key_phase : 1; /* Key phase used in outgoing packets */
+    unsigned int current_spin : 1;
+
+    /* Management of streams */
+    picosplay_tree_t stream_tree;
+    picoquic_stream_head_t * first_output_stream;
+    picoquic_stream_head_t * last_output_stream;
+    uint64_t high_priority_stream_id;
+    uint64_t next_stream_id[4];
+    // uint64_t priority_limit_for_bypass; /* Bypass CC if dtagram or stream priority lower than this, 0 means never */
+    // picoquic_pacing_t priority_bypass_pacing;
+
+    /* Repeat queue contains packets with data frames that should be
+     * sent according to priority when congestion window opens. */
+    picosplay_tree_t queue_data_repeat_tree;
+
+    /* Management of datagram queue */
+    unsigned int is_datagram_ready : 1; /* Active polling for datagrams */
+    picoquic_misc_frame_header_t* first_datagram;
+    picoquic_misc_frame_header_t* last_datagram;
+    uint64_t datagram_priority;
+    int datagram_conflicts_count;
+    int datagram_conflicts_max;
+} picoquic_multicast_channel_t;
+
+// State of a multicast channel in a cnx (with buffers for extensions):
+//   00..09 -> Pending join
+//   10     -> Join complete
+//   11..19 -> Pending leave
+//   20     -> Leave complete
+//   21..29 -> Pending retire
+//   30     -> Retire complete
+typedef enum {
+    // The channel was not yet announced and is scheduled to be announced on this connection
+    picoquic_mc_state_announce_scheduled = 0,
+
+    // After receiving (client) or sending (server) MC_ANNOUNCE
+    picoquic_mc_state_announced = 2,
+
+    // Ater receiving (client) or sending (server) MC_JOIN frame
+    picoquic_mc_state_join_pending = 5, 
+
+    // After sending (client) or receiving (server) MC_STATE(Joined) 
+    picoquic_mc_state_join_attempted = 8,
+
+    // After sending (client) or receiving (server) MC_ACK 
+    // -> acknowledging first data on the multicast channel
+    picoquic_mc_state_join_confirmed = 10,
+
+    // After sending/receiving MC_LEAVE
+    picoquic_mc_state_leave_pending = 15,
+
+    // After sending (client) or receiving (server) MC_STATE(Left)
+    // OR MC_STATE(Declined Join)
+    picoquic_mc_state_left = 20,
+
+    // After receiving (client) or sending (server) MC_RETIRE
+    picoquic_mc_state_retire_pending = 25,
+
+    // After sending (client) or receiving (server) MC_STATE(Retired)
+    picoquic_mc_state_retired = 30,
+
+    // When an unrecoverable error occured
+    // (this only refers to the channel usage in that connection, the channel itself may still be intact!)
+    picoquic_mc_state_error = 99
+} picoquic_mc_state_enum;
+
+typedef struct st_picoquic_mc_channel_in_cnx_t { // ENHANCE MC: Maybe add pointer back to cnx here for convenience?
+    picoquic_multicast_channel_t* channel;
+    picoquic_mc_state_enum state;
+    int key_available;
+    int state_frame_available;
+    int limits_frame_available;
+    uint64_t latest_key_sequence_available;
+    uint64_t latest_state_sequence_available;
+    uint64_t latest_limits_sequence_available;
+    struct mcrx_subscription* mcrx_subscription;
+
+    // the following is used on server only:
+    int mc_announce_acked;
+    int mc_join_acked;
+    int mc_leave_acked;
+    int mc_retire_acked;
+    int key_acked;                      // At least one MC_KEY frame was acked
+    uint64_t latest_key_sequence_acked;
+
+    // the following is used on client only:
+    picoquic_mc_state_enum state_scheduled;
+    picoquic_mc_state_frame_enum state_frame_scheduled;
+    int state_reason_scheduled;         // reason code for scheduled state frame, could also be different from picoquic_mc_state_reason_enum choices
+    int mc_state_acked;                 // At least one MC_STATE frame was acked
+    int mc_limits_acked;                // At least one MC_LIMITS frame was acked
+    uint64_t latest_state_sequence_acked;
+    uint64_t latest_limits_sequence_acked;
+} picoquic_mc_channel_in_cnx_t;
+
+uint8_t picoquic_spinbit_basic_multicast(picoquic_multicast_channel_t * channel);
 
 /*
 * Per connection context.
@@ -2046,6 +2055,9 @@ int picoquic_check_frame_needs_repeat(picoquic_cnx_t* cnx, const uint8_t* bytes,
 uint8_t* picoquic_format_available_stream_frames(picoquic_cnx_t* cnx, picoquic_path_t * path_x,
     uint8_t* bytes_next, uint8_t* bytes_max, uint64_t current_priority,
     int* more_data, int* is_pure_ack, int* stream_tried_and_failed, int* ret);
+uint8_t* picoquic_format_available_stream_frames_multicast(picoquic_multicast_channel_t* channel, 
+    uint8_t* bytes_next, uint8_t* bytes_max, uint64_t current_priority, int* more_data, 
+    int* stream_tried_and_failed, int* ret);
 
 /* Handling of stream_data_frames that need repeating.
  */
@@ -2160,7 +2172,9 @@ void picoquic_clear_ack_ctx(picoquic_ack_context_t* ack_ctx);
 void picoquic_reset_ack_context(picoquic_ack_context_t* ack_ctx);
 int picoquic_queue_handshake_done_frame(picoquic_cnx_t* cnx);
 uint8_t* picoquic_format_first_datagram_frame(picoquic_cnx_t* cnx, uint8_t* bytes, uint8_t* bytes_max, int* more_data, int* is_pure_ack);
+uint8_t * picoquic_format_first_datagram_frame_multicast(picoquic_multicast_channel_t* channel, uint8_t* bytes, uint8_t *bytes_max, int * more_data);
 uint8_t* picoquic_format_ready_datagram_frame(picoquic_cnx_t* cnx, picoquic_path_t * path_x, uint8_t* bytes, uint8_t* bytes_max, int* more_data, int* is_pure_ack, int* ret);
+uint8_t* picoquic_format_ready_datagram_frame_multicast(picoquic_multicast_channel_t* channel, uint8_t* bytes, uint8_t* bytes_max, int* more_data, int * ret);
 uint8_t* picoquic_decode_datagram_frame_header(uint8_t* bytes, const uint8_t* bytes_max,
     uint8_t* frame_id, uint64_t* length);
 const uint8_t* picoquic_parse_ack_frequency_frame(const uint8_t* bytes, const uint8_t* bytes_max, 

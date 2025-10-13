@@ -1511,8 +1511,8 @@ int picoquic_compute_multicast_secrets(picoquic_quic_t * quic, picoquic_multicas
     }
 
     // Set crypto context for server (only encryption)
-    picoquic_setup_multicast_crypto_context_header(quic, &channel->header_secret, channel->crypto_context, channel->header_protection_algorithm, 1);
-    picoquic_setup_multicast_crypto_context_aead(quic, new_aead_secret, channel->crypto_context, channel->aead_algorithm, 1);
+    picoquic_setup_multicast_crypto_context_header(quic, &channel->header_secret, &channel->crypto_context, channel->header_protection_algorithm, 1);
+    picoquic_setup_multicast_crypto_context_aead(quic, new_aead_secret, &channel->crypto_context, channel->aead_algorithm, 1);
 
     if (channel->aead_algorithm == PICOQUIC_AES_256_GCM_SHA384) {
         new_aead_secret->secret_len = 48;
@@ -1530,46 +1530,46 @@ int picoquic_compute_multicast_secrets(picoquic_quic_t * quic, picoquic_multicas
 }
 
 int picoquic_setup_multicast_crypto_context_aead(picoquic_quic_t* quic, picoquic_multicast_aead_secret_t* mc_aead,
-    picoquic_crypto_context_t* crypto_context, int cipher, int is_server) 
+    picoquic_crypto_context_t* crypto_context, int cipher_id, int is_server) 
 {
     if (mc_aead == NULL || mc_aead->secret_len == 0) {
         return -1;
     }
     
-    ptls_cipher_suite_t* cipher = picoquic_get_cipher_suite_by_id(cipher, quic->use_low_memory);
-    if (cipher == NULL) {
+    ptls_cipher_suite_t* cipher_suite = picoquic_get_cipher_suite_by_id(cipher_id, quic->use_low_memory);
+    if (cipher_suite == NULL) {
         return -1;
     }
 
     int ret = 0;
 
     if (is_server != 0) {
-        ret = picoquic_set_aead_from_secret(&crypto_context->aead_encrypt, cipher, is_server, mc_aead->secret, NULL);
+        ret = picoquic_set_aead_from_secret(&crypto_context->aead_encrypt, cipher_suite, is_server, mc_aead->secret, NULL);
     } else {
-        ret = picoquic_set_aead_from_secret(&crypto_context->aead_decrypt, cipher, is_server, mc_aead->secret, NULL);
+        ret = picoquic_set_aead_from_secret(&crypto_context->aead_decrypt, cipher_suite, is_server, mc_aead->secret, NULL);
     }
 
     return ret;
 }
 
 int picoquic_setup_multicast_crypto_context_header(picoquic_quic_t* quic, picoquic_multicast_header_secret_t* mc_header,
-    picoquic_crypto_context_t* crypto_context, int cipher, int is_server) 
+    picoquic_crypto_context_t* crypto_context, int cipher_id, int is_server) 
 {
     if (mc_header == NULL || mc_header->secret_len == 0) {
         return -1;
     }
 
-    ptls_cipher_suite_t* cipher = picoquic_get_cipher_suite_by_id(cipher, quic->use_low_memory);
-    if (cipher == NULL) {
+    ptls_cipher_suite_t* cipher_suite = picoquic_get_cipher_suite_by_id(cipher_id, quic->use_low_memory);
+    if (cipher_suite == NULL) {
         return -1;
     }
 
     int ret = 0;
 
     if (is_server != 0) {
-        ret = picoquic_set_pn_enc_from_secret_multicast(&crypto_context->pn_enc, cipher, is_server, mc_header->secret);
+        ret = picoquic_set_pn_enc_from_secret_multicast(&crypto_context->pn_enc, cipher_suite, is_server, mc_header->secret);
     } else {
-        ret = picoquic_set_pn_enc_from_secret_multicast(&crypto_context->pn_dec, cipher, is_server, mc_header->secret);
+        ret = picoquic_set_pn_enc_from_secret_multicast(&crypto_context->pn_dec, cipher_suite, is_server, mc_header->secret);
     }
 
     return ret;

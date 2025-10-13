@@ -41,6 +41,13 @@ uint8_t picoquic_spinbit_basic_outgoing(picoquic_cnx_t * cnx)
     return spin_bit;
 }
 
+uint8_t picoquic_spinbit_basic_multicast(picoquic_multicast_channel_t * channel)
+{
+    uint8_t spin_bit = (uint8_t)((channel->current_spin) << 5);
+
+    return spin_bit;
+}
+
 /*
  * Two procedures defining the null spin bit variant
  */
