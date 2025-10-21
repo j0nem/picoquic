@@ -1500,6 +1500,7 @@ int picoquic_discard_stream(picoquic_cnx_t* cnx, uint64_t stream_id, uint16_t lo
  */
 int picoquic_mark_datagram_ready(picoquic_cnx_t* cnx, int is_ready);
 int picoquic_mark_datagram_ready_path(picoquic_cnx_t* cnx, uint64_t unique_path_id, int is_path_ready);
+int picoquic_mark_datagram_ready_multicast(picoquic_multicast_channel_t* channel, int is_ready);
 
 /* If a datagram is marked active, the application will receive a callback with
  * event type "picoquic_callback_prepare_datagram" when the transport is ready to

@@ -8168,17 +8168,17 @@ int picoquic_decode_frames(picoquic_cnx_t* cnx, picoquic_path_t * path_x, const 
                             ack_needed = 1;
 
                             // CLEAN MC: Refactor event/error logging to qlog
-                            if (bytes != NULL) {
-                                picoquic_multicast_channel_t* channel = cnx->mc_channels[cnx->nb_mc_channels-1]->channel;
-                                picoquic_mc_channel_in_cnx_t* ch_in_cnx = picoquic_find_multicast_channel_in_cnx(&channel->channel_id, cnx);
+                            // if (bytes != NULL) {
+                            //     picoquic_multicast_channel_t* channel = cnx->mc_channels[cnx->nb_mc_channels-1]->channel;
+                            //     picoquic_mc_channel_in_cnx_t* ch_in_cnx = picoquic_find_multicast_channel_in_cnx(&channel->channel_id, cnx);
 
-                                fprintf(stdout, " -- Channel id ");
-                                print_hex_bytes(channel->channel_id.id, channel->channel_id.id_len);
-                                fprintf(stdout, "\n -- State Seq number: %lu\n", ch_in_cnx->latest_state_sequence_available);
-                                fprintf(stdout, " -- New state (picoquic-internal-code): %u\n", ch_in_cnx->state);
-                            } 
+                            //     fprintf(stdout, " -- Channel id ");
+                            //     print_hex_bytes(channel->channel_id.id, channel->channel_id.id_len);
+                            //     fprintf(stdout, "\n -- State Seq number: %lu\n", ch_in_cnx->latest_state_sequence_available);
+                            //     fprintf(stdout, " -- New state (picoquic-internal-code): %u\n", ch_in_cnx->state);
+                            // } 
                             if (bytes == NULL) {
-                                fprintf(stdout, "ERROR: bytes == NULL after decoding MC_KEY frame\n");
+                                fprintf(stdout, "ERROR: bytes == NULL after decoding MC_STATE frame\n");
                             }
                             
                             break;
