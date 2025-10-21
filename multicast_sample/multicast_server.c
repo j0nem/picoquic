@@ -94,6 +94,12 @@ typedef struct st_multicast_server_ctx_t
     // ENHANCE MC Maybe: save cnx pointers instead of, to really identify clients
     int joined_clients;
     int active_clients; 
+    picoquic_network_thread_ctx_t sender_thread_ctx;
+    multicast_sender_ctx_t sender_app_ctx;
+    int sender_running;
+    const char *server_cert; 
+    const char *server_key;
+    int sender_port;
 } multicast_server_ctx_t;
 
 multicast_server_datagram_ctx_t *multicast_server_create_datagram_context(multicast_server_ctx_t *server_ctx, uint64_t datagram_id)
@@ -389,6 +395,7 @@ int multicast_server_callback(picoquic_cnx_t *cnx,
         case picoquic_callback_close:             /* Received connection close */
         case picoquic_callback_application_close: /* Received application close */
             /* Delete the server application context */
+            picoquic_multicast_sender_stop(&server_ctx->sender_thread_ctx);
             multicast_server_delete_context(server_ctx);
             picoquic_set_callback(cnx, NULL, NULL);
             break;
@@ -409,8 +416,20 @@ int multicast_server_callback(picoquic_cnx_t *cnx,
             }
             break;
         case picoquic_callback_multicast_join_attempted:
-            // TODO MC: If data sending on multicast channel did not start yet, start now
-            // TODO MC: Continue implementation here
+            // If data sending on multicast channel did not start yet, start now
+            if (!server_ctx->sender_running) {
+                int err = picoquic_multicast_sender_start(server_ctx->sender_port, 
+                    server_ctx->server_cert, server_ctx->server_key, server_ctx->served_file, 
+                    server_ctx->mc_channel, &server_ctx->sender_thread_ctx, &server_ctx->sender_app_ctx
+                );
+                if (err == 0) {
+                    server_ctx->sender_running = 1;
+                     fprintf(stdout, "Multicast sender started\n");
+                } else {
+                    fprintf(stderr, "Error while starting multicast sender: %i\n", err);
+                }
+            }
+            
             break;
         case picoquic_callback_multicast_join_confirmed: 
             // TODO MC: currently not implemented (when MC_ACK is received)
@@ -441,7 +460,7 @@ int multicast_server_callback(picoquic_cnx_t *cnx,
  * - The loop breaks if the socket return an error.
  */
 
-int picoquic_multicast_server(int server_port, const char *server_cert, const char *server_key, const char *served_file)
+int picoquic_multicast_server(int server_port, int sender_port, const char *server_cert, const char *server_key, const char *served_file)
 {
     // TODO MC: Start background thread mc sender server in this method somewhere
 
@@ -454,6 +473,9 @@ int picoquic_multicast_server(int server_port, const char *server_cert, const ch
 
     default_context.served_file = served_file;
     default_context.served_file_len = strlen(served_file);
+    default_context.server_cert = server_cert;
+    default_context.server_key = server_key;
+    default_context.sender_port = sender_port;
 
     printf("Starting Picoquic Multicast server on port %d\n", server_port);
     printf("Serving file %s\n", served_file);
