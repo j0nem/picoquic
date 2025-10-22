@@ -1510,15 +1510,15 @@ int picoquic_compute_multicast_secrets(picoquic_quic_t * quic, picoquic_multicas
         return ret;
     }
 
-    // Set crypto context for server (only encryption)
-    picoquic_setup_multicast_crypto_context_header(quic, &channel->header_secret, &channel->crypto_context, channel->header_protection_algorithm, 1);
-    picoquic_setup_multicast_crypto_context_aead(quic, new_aead_secret, &channel->crypto_context, channel->aead_algorithm, 1);
-
     if (channel->aead_algorithm == PICOQUIC_AES_256_GCM_SHA384) {
         new_aead_secret->secret_len = 48;
     } else if (channel->aead_algorithm == PICOQUIC_AES_128_GCM_SHA256) {
         new_aead_secret->secret_len = 32;    
     }
+
+    // Set crypto context for server (only encryption)
+    picoquic_setup_multicast_crypto_context_header(quic, &channel->header_secret, &channel->crypto_context, channel->header_protection_algorithm, 1);
+    picoquic_setup_multicast_crypto_context_aead(quic, new_aead_secret, &channel->crypto_context, channel->aead_algorithm, 1);
 
     new_aead_secret->key_seq_number = 0;
     new_aead_secret->from_pkt_number = 0;

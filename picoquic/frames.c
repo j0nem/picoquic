@@ -5479,7 +5479,8 @@ uint8_t* picoquic_format_ready_datagram_frame_multicast(picoquic_multicast_chann
         datagram_data_context.allowed_space = allowed_space;
         datagram_data_context.after_data = bytes0;
         datagram_data_context.is_active = 0;
-        datagram_data_context.is_old_api = 0;
+        // because we cannot set cnx and path_x in datagram_data_context, we must set this to 1 as a workaround
+        datagram_data_context.is_old_api = 1; 
         datagram_data_context.was_called = 0;
 
         if ((channel->callback_fn)(channel, 0, (uint8_t*)&datagram_data_context, allowed_space,

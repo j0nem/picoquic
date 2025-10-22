@@ -4360,7 +4360,7 @@ int picoquic_prepare_segment_multicast(picoquic_multicast_channel_t* channel,
             
         /* Send here the frames that are not exempt from the pacing control,
          * but are exempt for congestion control */
-        
+
         // ENHANCE MC: Add congestion control condition here
 
         /* Send here the frames that are subject to both congestion and pacing control. */
@@ -4948,17 +4948,16 @@ int picoquic_prepare_packet_multicast(picoquic_multicast_channel_t* channel,
         DBG_PRINTF("Invalid buffer size: %zu", send_buffer_max);
         ret = -1;
     }
-
+    
     picoquic_store_addr(p_addr_to, (struct sockaddr*) &channel->group_ip);
 
     if (ret == 0) {
         /* Send the available packets */
         if (send_msg_size != NULL) {
             *send_msg_size = (p_addr_to->ss_family == AF_INET) ? PICOQUIC_INITIAL_MTU_IPV4 : PICOQUIC_INITIAL_MTU_IPV6;
-        }
-
-        if (send_buffer_max > *send_msg_size) {
-            // CHECK MC: large buffer: do something?
+             if (send_buffer_max > *send_msg_size) { 
+                // CHECK MC: large buffer: do something?
+            }
         }
 
         while (ret == 0)
@@ -5403,7 +5402,6 @@ int picoquic_prepare_next_packet_multicast(picoquic_quic_t* quic,
         ret = -1;
     }
     else {
-        // TODO MC: picoquic_prepare_packet_multicast
         ret = picoquic_prepare_packet_multicast(channel, send_buffer, send_buffer_max, send_length, p_addr_to, p_addr_from,
              send_msg_size);
 

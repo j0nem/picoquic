@@ -80,10 +80,10 @@ int picoquic_multicast_client(char const *server_name, int server_port, char con
 int picoquic_multicast_sender_start(int server_port, 
     const char* server_cert, const char* server_key,
     char const* file_path, 
-    picoquic_multicast_channel_t* channel, picoquic_network_thread_ctx_t* thread_ctx,
+    picoquic_multicast_channel_t* channel, picoquic_network_thread_ctx_t** thread_ctx,
     multicast_sender_ctx_t* sender_ctx);
     
-void picoquic_multicast_sender_stop(picoquic_network_thread_ctx_t* thread_ctx);
+void picoquic_multicast_sender_stop(picoquic_network_thread_ctx_t* thread_ctx, multicast_sender_ctx_t* sender_ctx);
 
 int picoquic_multicast_server(int server_port, int sender_port, const char *server_cert, const char *server_key, const char *served_file);
 

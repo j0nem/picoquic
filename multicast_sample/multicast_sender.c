@@ -128,7 +128,7 @@ static int multicast_sender_create_datagram(multicast_sender_ctx_t* sender_ctx)
     multicast_sender_datagram_ctx_t* datagram_ctx = (multicast_sender_datagram_ctx_t*)
         malloc(sizeof(multicast_sender_datagram_ctx_t));
 
-        
+
         if (datagram_ctx == NULL) {
         fprintf(stdout, "Memory Error, cannot create datagram for file\n");
         ret = -1;
@@ -145,14 +145,53 @@ static int multicast_sender_create_datagram(multicast_sender_ctx_t* sender_ctx)
             sender_ctx->last_datagram = datagram_ctx;
         }
         datagram_ctx->name_length = strlen(sender_ctx->file_path);
-
         
+
         /* Mark the stream as active. The callback will be asked to provide data when 
         * the connection is ready. */
-    //    ret = picoquic_mark_datagram_ready_multicast(sender_ctx->mc_channel, 1);
-       fprintf(stdout, "debug: after picoquic_mark_datagram_ready_multicast\n");
+       ret = picoquic_mark_datagram_ready_multicast(sender_ctx->mc_channel, 1);
         if (ret != 0) {
             fprintf(stdout, "Error %d, cannot mark datagram ready\n", ret);
+        }
+    }
+
+    return ret;
+}
+
+int multicast_sender_open_file(multicast_sender_ctx_t* sender_ctx, multicast_sender_datagram_ctx_t* datagram_ctx)
+{
+    int ret = 0;
+    char file_path[1024];
+
+    /* Keep track that the full file name was acquired. */
+    // sender_ctx->is_name_read = 1;
+
+    /* Verify the name, then try to open the file */
+    if (sizeof(sender_ctx->file_path) + 1 > sizeof(file_path)) {
+        ret = PICOQUIC_MULTICAST_NAME_TOO_LONG_ERROR;
+    }
+    else {
+        /* Use the picoquic_file_open API for portability to Windows and Linux */
+        datagram_ctx->F = picoquic_file_open(sender_ctx->file_path, "rb");
+
+        if (datagram_ctx->F == NULL) {
+            ret = PICOQUIC_MULTICAST_NO_SUCH_FILE_ERROR;
+        }
+        else {
+            /* Assess the file size, as this is useful for data planning */
+            long sz;
+            fseek(datagram_ctx->F, 0, SEEK_END);
+            sz = ftell(datagram_ctx->F);
+
+            if (sz <= 0) {
+                datagram_ctx->F = picoquic_file_close(datagram_ctx->F);
+                ret = PICOQUIC_MULTICAST_FILE_READ_ERROR;
+            }
+            else {
+                datagram_ctx->file_length = (size_t)sz;
+                fseek(datagram_ctx->F, 0, SEEK_SET);
+                ret = 0;
+            }
         }
     }
 
@@ -203,7 +242,6 @@ int multicast_sender_callback(picoquic_multicast_channel_t* channel,
 {
     int ret = 0;
     multicast_sender_ctx_t* sender_ctx = (multicast_sender_ctx_t*)callback_ctx;
-    multicast_sender_datagram_ctx_t* datagram_ctx = (multicast_sender_datagram_ctx_t*)v_stream_ctx;
 
     if (sender_ctx == NULL) {
         /* This should never happen, because the callback context for the is initialized 
@@ -227,38 +265,51 @@ int multicast_sender_callback(picoquic_multicast_channel_t* channel,
             // Currently, no STREAM frames are sent, just DATAGRAMs
             break;
         case picoquic_callback_prepare_datagram:
-            /* Active sending API */
-            if (datagram_ctx == NULL) {
-                /* This should never happen */
+            if (sender_ctx == NULL) {
+                // Should never happen
+                fprintf(stderr, "Sender context is null on picoquic_callback_prepare_datagram\n");
+                break;
             }
-            else if (datagram_ctx->F == NULL) {
-                /* Error, asking for data after end of file */
+            else if (sender_ctx->first_datagram == NULL) {
+                // Nothing to send
+                break;
             }
-            else {
-                /* Implement the zero copy callback */
-                size_t available = datagram_ctx->file_length - datagram_ctx->file_sent;
-                uint8_t *buffer;
 
-                if (available > length) {
-                    available = length;
-                }
+            fprintf(stdout, "debug: send datagram from application\n");
 
-                buffer = picoquic_provide_datagram_buffer(bytes, available);
-                if (buffer != NULL) {
-                    size_t nb_read = fread(buffer, 1, available, datagram_ctx->F);
+            multicast_sender_datagram_ctx_t* datagram_ctx = sender_ctx->first_datagram;
+            ret = multicast_sender_open_file(sender_ctx, datagram_ctx);
+            if (ret != 0) {
+                fprintf(stderr, "Error while opening the requested file: %i\n", ret);
+                break;
+            }
 
-                    if (nb_read != available) {
-                        /* Error while reading the file */
-                        multicast_sender_delete_datagram_context(sender_ctx, datagram_ctx);                    }
-                    else {
-                        datagram_ctx->file_sent += available;
-                    }
+            /* Implement the zero copy callback */
+            size_t available = datagram_ctx->file_length - datagram_ctx->file_sent;
+            uint8_t *buffer;
+
+            if (available > length) {
+                available = length;
+            }
+
+            buffer = picoquic_provide_datagram_buffer_ex(bytes, available, picoquic_datagram_active_any_path);
+            if (buffer != NULL) {
+                size_t nb_read = fread(buffer, 1, available, datagram_ctx->F);
+
+                if (nb_read != available) {
+                    /* Error while reading the file */
+                    ret = -1;           
                 }
                 else {
-                    /* Should never happen according to callback spec. */
-                    ret = -1;
+                    datagram_ctx->file_sent += available;
                 }
             }
+            else {
+                /* Should never happen according to callback spec. */
+                ret = -1;
+            }
+
+            multicast_sender_delete_datagram_context(sender_ctx, datagram_ctx);
             break;
         case picoquic_callback_almost_ready:
             break;
@@ -404,7 +455,7 @@ static int multicast_sender_loop_cb(picoquic_quic_t* quic, picoquic_packet_loop_
 int picoquic_multicast_sender_start(int server_port, 
     const char* server_cert, const char* server_key,
     char const* file_path, 
-    picoquic_multicast_channel_t* channel, picoquic_network_thread_ctx_t* thread_ctx,
+    picoquic_multicast_channel_t* channel, picoquic_network_thread_ctx_t** thread_ctx,
     multicast_sender_ctx_t* sender_ctx
 ) {
     int ret = 0;
@@ -418,6 +469,9 @@ int picoquic_multicast_sender_start(int server_port,
     /* Initialize the file path field */
     sender_ctx->file_path = file_path;
 
+    /* Save the multicast channel pointer */
+    sender_ctx->mc_channel = channel;
+
     /* Set the multicast channel for this thread */
     param.multicast_channel = channel;
 
@@ -425,7 +479,7 @@ int picoquic_multicast_sender_start(int server_port,
     param.local_port = server_port;
 
     /* Start the background thread. */
-    thread_ctx = picoquic_start_custom_network_thread_ex(quic, &param,
+    *thread_ctx = picoquic_start_custom_network_thread_ex(quic, &param,
         picoquic_internal_thread_create, picoquic_internal_thread_delete,
         picoquic_internal_thread_setname, "multicast_sender", 
         picoquic_packet_loop_multicast_send,
@@ -438,8 +492,7 @@ int picoquic_multicast_sender_start(int server_port,
 }
 
 /* Stop multicast sender server and cleanup */
-void picoquic_multicast_sender_stop(picoquic_network_thread_ctx_t* thread_ctx) {
-    multicast_sender_ctx_t* sender_ctx = (multicast_sender_ctx_t*)thread_ctx->loop_callback_ctx;
+void picoquic_multicast_sender_stop(picoquic_network_thread_ctx_t* thread_ctx, multicast_sender_ctx_t* sender_ctx) {
     picoquic_quic_t* quic = sender_ctx->quic;
     
     /* close the network thread. */

@@ -94,7 +94,7 @@ typedef struct st_multicast_server_ctx_t
     // ENHANCE MC Maybe: save cnx pointers instead of, to really identify clients
     int joined_clients;
     int active_clients; 
-    picoquic_network_thread_ctx_t sender_thread_ctx;
+    picoquic_network_thread_ctx_t* sender_thread_ctx;
     multicast_sender_ctx_t sender_app_ctx;
     int sender_running;
     const char *server_cert; 
@@ -395,7 +395,7 @@ int multicast_server_callback(picoquic_cnx_t *cnx,
         case picoquic_callback_close:             /* Received connection close */
         case picoquic_callback_application_close: /* Received application close */
             /* Delete the server application context */
-            picoquic_multicast_sender_stop(&server_ctx->sender_thread_ctx);
+            picoquic_multicast_sender_stop(server_ctx->sender_thread_ctx, &server_ctx->sender_app_ctx);
             multicast_server_delete_context(server_ctx);
             picoquic_set_callback(cnx, NULL, NULL);
             break;

@@ -965,6 +965,7 @@ int picoquic_create_multicast_channel(picoquic_quic_t* quic, picoquic_multicast_
     new_channel->max_rate = 20;
     new_channel->max_ack_delay = PICOQUIC_ACK_DELAY_MAX;
     new_channel->quic = quic;
+    new_channel->send_mtu = PICOQUIC_INITIAL_MTU_IPV4; // change when ipv6 is supported
 
     // CLEAN MC: Remove if not needed
     // if (new_channel->mc_tls_ctx == NULL) {
