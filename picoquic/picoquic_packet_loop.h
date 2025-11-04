@@ -137,6 +137,7 @@ typedef struct st_picoquic_packet_loop_param_t {
     size_t send_length_max;
     // Only used with picoquic_packet_loop_multicast_send. If set, only send data for this channel in loop
     picoquic_multicast_channel_t* multicast_channel;
+    int force_localhost_src_ip; // only used for multicast
 } picoquic_packet_loop_param_t;
 
 int picoquic_packet_loop_v2(picoquic_quic_t* quic,

@@ -315,6 +315,30 @@ typedef struct st_picoquic_packet_header_t {
     struct st_picoquic_local_cnxid_t* l_cid;
 } picoquic_packet_header;
 
+/* Packet header structure for multicast channel packets
+ * Only short headers in multicast channels, channel id instead of cnx id
+ */
+typedef struct st_picoquic_packet_header_multicast_t {
+    picoquic_multicast_channel_id_t channel_id;
+    uint32_t pn;
+    uint32_t vn;
+    size_t offset; /* offset to the first byte of the payload.*/
+    size_t pn_offset; /* offset to the first byte of the packet number */
+    picoquic_packet_type_enum ptype;
+    uint64_t pnmask;
+    size_t payload_length;
+
+    unsigned int key_phase : 1;
+    unsigned int spin : 1;
+    unsigned int has_spin_bit : 1;
+    unsigned int has_reserved_bit_set : 1;
+    unsigned int quic_bit_is_zero : 1;
+
+    size_t token_length;
+    const uint8_t* token_bytes;
+    struct st_picoquic_local_cnxid_t* l_cid;
+} picoquic_packet_header_multicast;
+
 /* There are two loss bits in the packet header. On is used
  * to report errors, the other to build an observable square
  * wave, of half period Q defined below.
@@ -1796,6 +1820,7 @@ picoquic_cnx_t* picoquic_cnx_by_net(picoquic_quic_t* quic, const struct sockaddr
 picoquic_cnx_t* picoquic_cnx_by_icid(picoquic_quic_t* quic, picoquic_connection_id_t* icid,
     const struct sockaddr* addr);
 picoquic_cnx_t* picoquic_cnx_by_secret(picoquic_quic_t* quic, const uint8_t* reset_secret, const struct sockaddr* addr);
+picoquic_multicast_channel_t* picoquic_mc_channel_by_id(picoquic_quic_t* quic, picoquic_multicast_channel_id_t* ch_id);
 
 /* Pacing implementation */
 void picoquic_pacing_init(picoquic_pacing_t* pacing, uint64_t current_time);

@@ -868,6 +868,22 @@ void* picoquic_packet_loop_multicast_send(void* v_ctx)
                 SOCKET_TYPE send_socket = s_ctx[0].fd;
                 bytes_sent += send_length;
 
+                // Force 127.0.0.1 as src ip for local tests
+                if (param->force_localhost_src_ip) {
+                    picoquic_store_text_addr(&local_addr, "127.0.0.1", 0);
+                }
+
+                char text[256];
+                fprintf(stdout, "DEBUG: Send multicast packet to %s\n", picoquic_addr_text((struct sockaddr*)&peer_addr, text, sizeof(text)));
+
+                // WORKAROUND: For whatever reason, in picoquic the port in every sockaddr struct is usually stored in host byte order.
+                // To get multicast working, we have to convert the port of the group address to network byte order before calling picoquic_sendmsg()
+                if (peer_addr.ss_family == AF_INET) {
+                    ((struct sockaddr_in*)&peer_addr)->sin_port = htons(((struct sockaddr_in*)&peer_addr)->sin_port);
+                } else if (peer_addr.ss_family == AF_INET6) {
+                    ((struct sockaddr_in6*)&peer_addr)->sin6_port = htons(((struct sockaddr_in6*)&peer_addr)->sin6_port);
+                }
+
                 if (send_socket == INVALID_SOCKET) {
                     sock_ret = -1;
                     sock_err = -1;

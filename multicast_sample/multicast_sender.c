@@ -478,6 +478,9 @@ int picoquic_multicast_sender_start(int server_port,
     /* Set the multicast sender port for this thread */
     param.local_port = server_port;
 
+    /* Force 127.0.0.1 as src ip for multicast packets for local tests */
+    param.force_localhost_src_ip = 1;
+
     /* Start the background thread. */
     *thread_ctx = picoquic_start_custom_network_thread_ex(quic, &param,
         picoquic_internal_thread_create, picoquic_internal_thread_delete,

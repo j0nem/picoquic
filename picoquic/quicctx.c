@@ -5167,6 +5167,21 @@ picoquic_cnx_t* picoquic_cnx_by_secret(picoquic_quic_t* quic, const uint8_t* res
     return ret;
 }
 
+picoquic_multicast_channel_t* picoquic_mc_channel_by_id(picoquic_quic_t* quic, picoquic_multicast_channel_id_t* ch_id)
+{
+    for (int i = 0; i < quic->nb_mc_channels; i++) {
+        picoquic_multicast_channel_t* channel = quic->mc_channels[i];
+        int len = (int) channel->channel_id.id_len < (int) ch_id->id_len ? (int) channel->channel_id.id_len : (int) ch_id->id_len;
+        
+        if (memcmp(channel->channel_id.id, ch_id->id, len) == 0) {
+            return channel;
+        }
+    }
+
+    return NULL;
+}
+
+
 /* Get congestion control algorithm by name
  * TODO: if we want to minimize code size, we should not require linking a whole library
  * of congestion control algorithms. Intead, the application should have a list of
