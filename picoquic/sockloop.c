@@ -706,13 +706,14 @@ int picoquic_packet_loop_select(picoquic_socket_ctx_t* s_ctx,
                         break;
                     }
                     else {
-                        /* Document incoming port */
+                        /* Document incoming port and interface */
                         if (addr_dest->ss_family == AF_INET6) {
                             mc_channels[i]->local_port = ((struct sockaddr_in6*)addr_dest)->sin6_port;
                         }
                         else if (addr_dest->ss_family == AF_INET) {
                             mc_channels[i]->local_port = ((struct sockaddr_in*)addr_dest)->sin_port;
                         }
+                        mc_channels[i]->local_if = *dest_if;
                         break;
                     }
                 }

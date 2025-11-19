@@ -2727,15 +2727,17 @@ int picoquic_incoming_segment(
         } 
 
         for (int i = 0; i < quic->nb_mc_channels; i++) {
-            if (quic->mc_channels[i]->local_port == port && quic->mc_channels[i]->client_mode && quic->mc_channels[i]->nb_used_in_cnx == 1) {
+            if (quic->mc_channels[i]->local_if == if_index_to && quic->mc_channels[i]->local_port == port 
+                && quic->mc_channels[i]->client_mode && quic->mc_channels[i]->nb_used_in_cnx == 1
+            ) {
                 mc_ch_in_cnx = quic->mc_channels[i]->used_in_cnx[0];
                 multicast_channel = mc_ch_in_cnx->channel;
-                fprintf(stdout, "DEBUG: Detected multicast data from channel: ");
+                fprintf(stdout, "DEBUG: Detected multicast data to port %u, interface %i from channel: ", port, if_index_to);
                 print_hex_bytes(multicast_channel->channel_id.id, multicast_channel->channel_id.id_len);
                 fprintf(stdout, "\n");
             }
         }
-    }
+    } 
     
     /* Parse the header and decrypt the segment */
     if (mc_ch_in_cnx == NULL) {

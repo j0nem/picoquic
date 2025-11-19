@@ -1312,6 +1312,7 @@ typedef struct st_picoquic_multicast_channel_t {
     int socket_open;     // bool, if a socket is opened
     SOCKET_TYPE fd;      // fd of used local socket (client: via mcrx)
     uint16_t local_port; // port of used local socket (server: sending, client: receiving - via mcrx)
+    int local_if;        // local interface used for receiving multicast data
 
     /* Call back function and context */
     picoquic_stream_data_mc_cb_fn callback_fn;
