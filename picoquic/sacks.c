@@ -172,6 +172,27 @@ picoquic_sack_item_t* picoquic_sack_find_range_below_number(picoquic_sack_list_t
  * If using the "horizon", then consider already received all packets 
  * at or below the horizon.
  */
+int picoquic_is_pn_already_received_multicast(picoquic_mc_channel_in_cnx_t* ch_in_cnx, 
+    picoquic_local_cnxid_t * l_cid, uint64_t pn64)
+{
+    int is_received = 0;
+    picoquic_sack_list_t* sack_list = &ch_in_cnx->ack_ctx.sack_list;
+
+    if (sack_list->horizon_delay > 0 && pn64 < sack_list->ack_horizon) {
+        is_received = 1;
+    }
+    else {
+        picoquic_sack_item_t* sack_found = picoquic_sack_find_range_below_number(sack_list, NULL, pn64);
+        is_received = (sack_found != NULL && pn64 <= sack_found->end_of_sack_range);
+    }
+    return is_received;
+}
+
+/*
+ * Check whether the packet was already received.
+ * If using the "horizon", then consider already received all packets 
+ * at or below the horizon.
+ */
 int picoquic_is_pn_already_received(picoquic_cnx_t* cnx, 
     picoquic_packet_context_enum pc, picoquic_local_cnxid_t * l_cid, uint64_t pn64)
 {

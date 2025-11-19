@@ -758,32 +758,18 @@ size_t picoquic_create_packet_header_multicast(
     /* Create a short packet -- using 32 bit sequence numbers for now */
     uint8_t K = (channel->key_phase) ? 0x04 : 0;
     uint8_t C = 0x40; /* set the QUIC bit */
-    size_t pn_l = 4;  /* default packet length to 4 bytes */
+    // ENHANCE MC: packet number length is currently always 4 bytes
+    size_t pn_l = 4;
 
     length = 0;
     bytes[length++] = (K | C | picoquic_spinbit_basic_multicast(channel));
     length += picoquic_format_multicast_channel_id(&bytes[length], PICOQUIC_MAX_PACKET_SIZE - length, &channel->channel_id);
 
     *pn_offset = length;
-    if (header_length > length && header_length < length + 4) {
-        pn_l = header_length - length;
-    }
     *pn_length = pn_l;
+
     bytes[0] |= (pn_l - 1);
-    switch (pn_l) {
-    case 1:
-        bytes[length] = (uint8_t)sequence_number;
-        break;
-    case 2:
-        picoformat_16(&bytes[length], (uint16_t)sequence_number);
-        break;
-    case 3:
-        picoformat_24(&bytes[length], (uint32_t)sequence_number);
-        break;
-    default:
-        picoformat_32(&bytes[length], (uint32_t)sequence_number);
-        break;
-    }
+    picoformat_32(&bytes[length], (uint32_t)sequence_number);
     length += pn_l;
 
     return length;
@@ -4394,6 +4380,8 @@ int picoquic_prepare_segment_multicast(picoquic_multicast_channel_t* channel,
 
 static int picoquic_check_idle_timer(picoquic_cnx_t* cnx, uint64_t* next_wake_time, uint64_t current_time)
 {
+    // TODO MC: Adjust this method to also consider arriving multicast packets
+    // when calculating idle time for a specific cnx
     int ret = 0;
     uint64_t idle_timer = 0;
 
@@ -4419,7 +4407,9 @@ static int picoquic_check_idle_timer(picoquic_cnx_t* cnx, uint64_t* next_wake_ti
         idle_timer = cnx->start_time + PICOQUIC_MICROSEC_HANDSHAKE_MAX;
     }
 
-    if (current_time >= idle_timer) {
+    // When there are active multicast channels in the cnx, never disconnect the unicast cnx
+    // TODO MC: Do allow disconnection when all channels were left or are retired
+    if (current_time >= idle_timer && cnx->nb_mc_channels == 0) {
         /* Too long silence, break it. */
         if (cnx->cnx_state != picoquic_state_draining) {
             cnx->local_error = PICOQUIC_ERROR_IDLE_TIMEOUT;
