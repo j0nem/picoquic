@@ -5389,7 +5389,7 @@ uint8_t* picoquic_provide_datagram_buffer_ex(void* context, size_t length, picoq
     data_ctx->is_active = ((int)is_active) & 1;
     data_ctx->was_called = 1;
 
-    if (!data_ctx->is_old_api) {
+    if (!data_ctx->is_old_api) { 
         /* We apply the state change at this point, rather than after the return of the
         * callback, so as to minimize "developer surprise". If the  application calls
         * "picoquic_mark_datagram_ready" after this call, the value set by the
@@ -7858,7 +7858,7 @@ int picoquic_decode_frames_multicast(picoquic_mc_channel_in_cnx_t* ch_in_cnx, co
             && first_byte != picoquic_frame_type_mc_leave
             && first_byte != picoquic_frame_type_mc_retire
         ) {
-            DBG_PRINTF("Unsupported frame in multicast packet: %x", first_byte);
+            fprintf(stdout,"Unsupported frame in multicast packet: %x\n", first_byte);
             bytes = NULL;
             break;
         }

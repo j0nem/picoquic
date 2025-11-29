@@ -758,18 +758,35 @@ size_t picoquic_create_packet_header_multicast(
     /* Create a short packet -- using 32 bit sequence numbers for now */
     uint8_t K = (channel->key_phase) ? 0x04 : 0;
     uint8_t C = 0x40; /* set the QUIC bit */
-    // ENHANCE MC: packet number length is currently always 4 bytes
-    size_t pn_l = 4;
+    size_t pn_l = 4;  /* default packet length to 4 bytes */
 
     length = 0;
     bytes[length++] = (K | C | picoquic_spinbit_basic_multicast(channel));
     length += picoquic_format_multicast_channel_id(&bytes[length], PICOQUIC_MAX_PACKET_SIZE - length, &channel->channel_id);
 
     *pn_offset = length;
+
+    if (header_length > length && header_length < length + 4) {
+        pn_l = header_length - length;
+    }
+
     *pn_length = pn_l;
 
     bytes[0] |= (pn_l - 1);
-    picoformat_32(&bytes[length], (uint32_t)sequence_number);
+    switch (pn_l) {
+    case 1:
+        bytes[length] = (uint8_t)sequence_number;
+        break;
+    case 2:
+        picoformat_16(&bytes[length], (uint16_t)sequence_number);
+        break;
+    case 3:
+        picoformat_24(&bytes[length], (uint32_t)sequence_number);
+        break;
+    default:
+        picoformat_32(&bytes[length], (uint32_t)sequence_number);
+        break;
+    }
     length += pn_l;
 
     return length;
@@ -1092,9 +1109,7 @@ size_t picoquic_finalize_and_protect_packet_multicast(picoquic_multicast_channel
         /* Next, encrypt the PN -- The sample is located after the pn_offset */
         picoquic_protect_packet_header(send_buffer, pn_offset, first_mask, channel->crypto_context.pn_enc);
 
-        send_length = length;
-
-        if (length > 0) {
+        if (send_length > 0) {
             packet->checksum_overhead = checksum_overhead;
             // TODO MC: Handle retransmissions
             // picoquic_queue_for_retransmit(cnx, path_x, packet, length, current_time);

@@ -2737,7 +2737,7 @@ int picoquic_incoming_segment(
                 fprintf(stdout, "\n");
             }
         }
-    } 
+    }
     
     /* Parse the header and decrypt the segment */
     if (mc_ch_in_cnx == NULL) {
@@ -2950,15 +2950,14 @@ int picoquic_incoming_segment(
         } 
         else if (mc_ch_in_cnx != NULL) {
             // Only 1rtt packets allowed in multicast channels
-            if (ph.ptype != picoquic_packet_1rtt_protected) {
+            if (phm.ptype != picoquic_packet_1rtt_protected) {
                 /* Packet type error. Log and ignore */
-                DBG_PRINTF("Unexpected packet type (%d), type: %d, epoch: %d, pc: %d, pn: %d\n",
-                    cnx->client_mode, ph.ptype, ph.epoch, ph.pc, (int) ph.pn);
+                DBG_PRINTF("Unexpected packet type (%d), type: %d, epoch: %d, pn: %d\n",
+                    cnx->client_mode, phm.ptype, picoquic_epoch_1rtt, (int) phm.pn);
                 ret = PICOQUIC_ERROR_DETECTED;
             }
 
             if (ret == 0) {
-                // TODO MC: Continue here: Handle multicast frames
                 ret = picoquic_incoming_1rtt_multicast(mc_ch_in_cnx, bytes, decrypted_data,
                     &phm, addr_from, addr_to, if_index_to, current_time);
             }

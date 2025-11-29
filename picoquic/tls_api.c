@@ -1542,12 +1542,7 @@ int picoquic_setup_multicast_crypto_context_aead(picoquic_quic_t* quic, picoquic
     }
 
     int ret = 0;
-
-    if (is_server != 0) {
-        ret = picoquic_set_aead_from_secret(&crypto_context->aead_encrypt, cipher_suite, is_server, mc_aead->secret, NULL);
-    } else {
-        ret = picoquic_set_aead_from_secret(&crypto_context->aead_decrypt, cipher_suite, is_server, mc_aead->secret, NULL);
-    }
+    ret = picoquic_set_aead_from_secret(is_server ? &crypto_context->aead_encrypt : &crypto_context->aead_decrypt, cipher_suite, is_server, mc_aead->secret, NULL);
 
     return ret;
 }
@@ -1565,13 +1560,8 @@ int picoquic_setup_multicast_crypto_context_header(picoquic_quic_t* quic, picoqu
     }
 
     int ret = 0;
-
-    if (is_server != 0) {
-        ret = picoquic_set_pn_enc_from_secret_multicast(&crypto_context->pn_enc, cipher_suite, is_server, mc_header->secret);
-    } else {
-        ret = picoquic_set_pn_enc_from_secret_multicast(&crypto_context->pn_dec, cipher_suite, is_server, mc_header->secret);
-    }
-
+    ret = picoquic_set_pn_enc_from_secret_multicast(is_server ? &crypto_context->pn_enc : &crypto_context->pn_dec, cipher_suite, is_server, mc_header->secret);
+        
     return ret;
 }
 
