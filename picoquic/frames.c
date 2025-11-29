@@ -164,6 +164,23 @@ int picoquic_delete_stream_if_closed(picoquic_cnx_t* cnx, picoquic_stream_head_t
     return ret;
 }
 
+int picoquic_delete_stream_if_closed_multicast(picoquic_multicast_channel_t* channel, picoquic_stream_head_t* stream)
+{
+    int ret = 0;
+
+    if (!stream->is_closed && picoquic_is_stream_closed(stream, 0)) {
+        stream->is_closed = 1;
+        ret = 1;
+    }
+    
+    /* We only delete the stream if there are no pending retransmissions */
+    if (stream->is_closed && picoquic_is_stream_acked(stream)) {
+        picoquic_delete_stream_multicast(channel, stream);
+    }
+
+    return ret;
+}
+
 /* if the initial remote has changed, update the existing streams.
  * By definition, this is only needed for streams locally created for 0-RTT traffic.
  */
@@ -1431,6 +1448,78 @@ picoquic_stream_head_t* picoquic_find_ready_stream_path(picoquic_cnx_t* cnx, pic
     return found_stream;
 }
 
+picoquic_stream_head_t* picoquic_find_ready_stream_multicast(picoquic_multicast_channel_t* channel)
+{
+    picoquic_stream_head_t* first_stream = channel->first_output_stream;
+    picoquic_stream_head_t* stream = first_stream;
+    picoquic_stream_head_t* found_stream = NULL;
+
+    /* Look for a ready stream */
+    while (stream != NULL) {
+        int has_data = 0;
+        picoquic_stream_head_t* next_stream = stream->next_output_stream;
+
+        // Only server-initiated, unidirectional streams are allowed in multicast channels
+        if (IS_CLIENT_STREAM_ID(stream->stream_id) != 0 || IS_BIDIR_STREAM_ID(stream->stream_id) != 0) {
+            stream = next_stream;
+            continue;
+        }
+
+        if (found_stream != NULL && stream->stream_priority > found_stream->stream_priority) {
+            /* All the streams at that priority level have been examined,
+             * the current selection is validated */
+            break;
+        }
+        // CHECK MC: Reinsert pacing condition below?
+        has_data = (/*channel->maxdata_remote > channel->data_sent &&*/ stream->sent_offset < stream->maxdata_remote && (stream->is_active ||
+                (stream->send_queue != NULL && stream->send_queue->length > stream->send_queue->offset) ||
+                (stream->fin_requested && !stream->fin_sent)));
+
+        if (stream->reset_requested && !stream->reset_sent) {
+            /* urgent action is needed, this takes precedence over FIFO vs round-robin processing */
+            found_stream = stream;
+            break;
+        } else if (has_data) {
+            /* Check that this stream is actually available for sending data */
+            if (stream->sent_offset == 0) {
+                has_data = 0;
+            }
+            if (has_data) {
+                /* Something can be sent */
+                if ((stream->stream_priority & 1) != 0) {
+                    /* This priority level requests FIFO processing, so we return the first available stream */
+                    found_stream = stream;
+                    break;
+                }
+                else if (found_stream == NULL || stream->last_time_data_sent < found_stream->last_time_data_sent) {
+                    /* Select this stream, but need to check if another stream should go before in round robin order */
+                    found_stream = stream;
+                }
+            }
+        }
+        else if (((stream->fin_requested && stream->fin_sent) || (stream->reset_requested && stream->reset_sent))) {
+            /* If stream is exhausted, remove from output list */
+            picoquic_remove_output_stream_multicast(channel, stream);
+            picoquic_delete_stream_if_closed_multicast(channel, stream);
+        }
+        // CHECK MC: Maybe re-add blocking/flow control code below
+        // else {
+        //     if (stream->is_active ||
+        //         (stream->send_queue != NULL && stream->send_queue->length > stream->send_queue->offset)) {
+        //         if (stream->sent_offset >= stream->maxdata_remote) {
+        //             channel->stream_blocked = 1;
+        //         }
+        //         else if (cnx->maxdata_remote <= cnx->data_sent) {
+        //             cnx->flow_blocked = 1;
+        //         }
+        //     }
+        // }
+        stream = next_stream;
+    }
+
+    return found_stream;
+}
+
 picoquic_stream_head_t* picoquic_find_ready_stream(picoquic_cnx_t* cnx)
 {
     return picoquic_find_ready_stream_path(cnx, NULL);
@@ -1837,6 +1926,109 @@ uint8_t * picoquic_format_stream_frame(picoquic_cnx_t* cnx, picoquic_stream_head
     return bytes;
 }
 
+uint8_t * picoquic_format_stream_frame_multicast(picoquic_multicast_channel_t* channel, picoquic_stream_head_t* stream,
+    uint8_t* bytes, uint8_t* bytes_max, int * more_data, int* is_still_active, int * ret)
+{
+    int may_close = 0;
+    *ret = 0;
+
+    if (stream->reset_sent) {
+        /* No data will be sent after a reset */
+        return bytes;
+    }
+
+    // ENHANCE MC: Support RESET_STREAM frame in multicast channels
+    // else if (stream->reset_requested && !stream->reset_sent) {
+    //     return picoquic_format_stream_reset_frame(cnx, stream, bytes, bytes_max, more_data, is_pure_ack);
+    // }
+    
+    if (!stream->is_active &&
+        (stream->send_queue == NULL || stream->send_queue->length <= stream->send_queue->offset) &&
+        (!stream->fin_requested || stream->fin_sent)) {
+        /* Nothing to send */
+        return bytes;
+    }
+    
+    uint8_t* bytes0 = bytes;
+
+    if ((bytes = picoquic_format_stream_frame_header(bytes, bytes_max, stream->stream_id, stream->sent_offset)) == NULL) {
+        bytes = bytes0;
+        *more_data = 1;
+    } else {
+        /* Compute the length */
+        size_t byte_space = bytes_max - bytes;
+
+        if (stream->is_active && stream->send_queue == NULL && !stream->fin_requested) {
+            /* The application requested active polling for this stream */
+            // ENHANCE MC: Queuing data for multicast streams currently not supported (only just-in-time), maybe add this later
+            picoquic_stream_data_buffer_argument_t stream_data_context;
+
+            stream_data_context.bytes = bytes0;
+            stream_data_context.byte_index = bytes - bytes0;
+            stream_data_context.allowed_space = byte_space;
+            stream_data_context.byte_space = bytes_max - bytes;
+            stream_data_context.length = 0;
+            stream_data_context.is_fin = 0;
+            stream_data_context.is_still_active = 0;
+            stream_data_context.app_buffer = NULL;
+
+            if ((channel->callback_fn)(channel, stream->stream_id, (uint8_t*)&stream_data_context, byte_space, picoquic_callback_prepare_to_send, channel->callback_ctx, stream->app_stream_ctx) != 0) {
+                /* something went wrong */
+                DBG_PRINTF("Prepare to send returns error 0x%x", PICOQUIC_TRANSPORT_INTERNAL_ERROR);
+                bytes = bytes0; /* CHECK: SHOULD THIS BE NULL ? */
+            }
+            else if (stream_data_context.length == 0 && stream_data_context.is_fin == 0) {
+                /* The application did not send any data */
+                bytes = bytes0;
+                stream->is_active = stream_data_context.is_still_active;
+            }
+            else
+            {
+                bytes = bytes0 + stream_data_context.byte_index + stream_data_context.length;
+                stream->sent_offset += stream_data_context.length;
+                stream->last_time_data_sent = picoquic_get_quic_time(channel->quic);
+                channel->data_sent += stream_data_context.length;
+
+                if ((stream_data_context.length > 0) && (stream_data_context.app_buffer == NULL ||
+                    stream_data_context.app_buffer < bytes0 ||
+                    stream_data_context.app_buffer >= bytes_max)) {
+                
+                    long long delta_buf = (long long)(stream_data_context.app_buffer - bytes);
+                    DBG_PRINTF("Stream data buffer corruption, delta = %lld\n", delta_buf);
+                }
+
+                if (stream_data_context.is_fin) {
+                    stream->is_active = 0;
+                    stream->fin_requested = 1;
+                    stream->fin_sent = 1;
+
+                    picoquic_remove_output_stream_multicast(channel, stream);
+                    may_close = 1;
+
+                    if (is_still_active != NULL) {
+                        *is_still_active = 0;
+                    }
+                }
+                else {
+                    stream->is_active = stream_data_context.is_still_active;
+                    if (is_still_active != NULL) {
+                        *is_still_active = stream_data_context.is_still_active;
+                    }
+                }
+            }
+        }
+    }
+
+    if (*ret == 0) {
+        if (!may_close || !picoquic_delete_stream_if_closed_multicast(channel, stream)) {
+            /* mark the stream as unblocked since we sent something */
+            stream->stream_data_blocked_sent = 0;
+        }
+    }
+
+    return bytes;
+}
+
 /* Format all available stream frames that fit in the packet.
  * Update more_data if more stream data is available
  * Update is_pure_ack if formated frames require ack
@@ -1872,6 +2064,40 @@ uint8_t* picoquic_format_available_stream_frames(picoquic_cnx_t* cnx, picoquic_p
 
     if (!more_stream_data && current_priority != UINT64_MAX) {
         more_stream_data |= (picoquic_find_ready_stream_path(cnx, NULL) != NULL);
+    }
+
+    *more_data |= more_stream_data;
+
+    return bytes_next;
+}
+
+uint8_t* picoquic_format_available_stream_frames_multicast(picoquic_multicast_channel_t* channel, uint8_t* bytes_next, uint8_t* bytes_max,
+    uint64_t current_priority, int* more_data, int* stream_tried_and_failed, int* ret)
+{
+    uint8_t* bytes_previous = bytes_next;
+    picoquic_stream_head_t* stream = picoquic_find_ready_stream_multicast(channel);
+    int more_stream_data = 0;
+
+    while (*ret == 0 && stream != NULL && stream->stream_priority <= current_priority && bytes_next < bytes_max) {
+        int is_still_active = 0;
+        bytes_next = picoquic_format_stream_frame_multicast(channel, stream, bytes_next, bytes_max, &more_stream_data, &is_still_active, ret);
+
+        if (*ret == 0) {
+            stream = picoquic_find_ready_stream_multicast(channel);
+            if (stream != NULL && bytes_next + 17 >= bytes_max) {
+                more_stream_data = 1;
+                break;
+            }
+        }
+        else {
+            break;
+        }
+    }
+
+    *stream_tried_and_failed = (!more_stream_data && bytes_next == bytes_previous);
+
+    if (!more_stream_data && current_priority != UINT64_MAX) {
+        more_stream_data |= (picoquic_find_ready_stream_multicast(channel) != NULL);
     }
 
     *more_data |= more_stream_data;
@@ -4975,6 +5201,47 @@ uint8_t* picoquic_decode_datagram_frame_header(uint8_t* bytes, const uint8_t* by
     return bytes;
 }
 
+const uint8_t* picoquic_decode_datagram_frame_multicast(picoquic_multicast_channel_t* channel, const uint8_t* bytes, const uint8_t* bytes_max)
+{
+    uint8_t frame_id = *bytes++;
+    unsigned int has_length = frame_id & 1;
+    uint64_t length = 0;
+
+    if (bytes != NULL) {
+        if (has_length) {
+            if ((bytes = picoquic_frames_varint_decode(bytes, bytes_max, &length)) == NULL ||
+                bytes + length > bytes_max ||
+                // CHECK MC: Negotiate max_datagram_frame_size for multicast somewhere? 
+                // Just use default PICOQUIC_MAX_PACKET_SIZE for now
+                length > PICOQUIC_MAX_PACKET_SIZE) {
+                DBG_PRINTF("Error: 0x%x, Frame ID: 0x%x", PICOQUIC_TRANSPORT_FRAME_FORMAT_ERROR, frame_id);
+                bytes = NULL;
+            }
+        }
+        else {
+            length = bytes_max - bytes;
+            if (length > PICOQUIC_MAX_PACKET_SIZE) {
+                DBG_PRINTF("Error: 0x%x, Frame ID: 0x%x", PICOQUIC_TRANSPORT_FRAME_FORMAT_ERROR, frame_id);
+                bytes = NULL;
+            }
+        }
+    }
+
+    if (bytes != NULL && channel->callback_fn != NULL) {
+        /* submit the data to the app */
+        if (channel->callback_fn(channel, 0, (uint8_t*)bytes,
+            (size_t)length, picoquic_callback_multicast_datagram, channel->callback_ctx, NULL) != 0) {
+            DBG_PRINTF("Error: 0x%x, Frame Type 0x%x", PICOQUIC_TRANSPORT_INTERNAL_ERROR, picoquic_frame_type_datagram);
+            bytes = NULL;
+        }
+    }
+    if (bytes != NULL){
+        bytes += length;
+    }
+
+    return bytes;
+}
+
 const uint8_t* picoquic_decode_datagram_frame(picoquic_cnx_t* cnx, picoquic_path_t * path_x, const uint8_t* bytes, const uint8_t* bytes_max)
 {
     uint8_t frame_id = *bytes++;
@@ -5073,6 +5340,20 @@ uint8_t * picoquic_format_first_datagram_frame(picoquic_cnx_t* cnx, uint8_t* byt
     return bytes;
 }
 
+uint8_t * picoquic_format_first_datagram_frame_multicast(picoquic_multicast_channel_t* channel, uint8_t* bytes,
+    uint8_t *bytes_max, int * more_data)
+{
+    if (bytes + channel->first_datagram->length > bytes_max) {
+        *more_data = 1;
+    }
+    else {
+        bytes = picoquic_format_first_misc_or_dg_frame(bytes, bytes_max, more_data, 0, 
+            channel->first_datagram, &channel->first_datagram, &channel->last_datagram);
+    }
+
+    return bytes;
+}
+
 /* Provide a datagram buffer for the length specified by the application.
  * The stack called with a pointer to the available space, which may extend
  * to the end of the packet. There are several interesting cases:
@@ -5108,7 +5389,7 @@ uint8_t* picoquic_provide_datagram_buffer_ex(void* context, size_t length, picoq
     data_ctx->is_active = ((int)is_active) & 1;
     data_ctx->was_called = 1;
 
-    if (!data_ctx->is_old_api) {
+    if (!data_ctx->is_old_api) { 
         /* We apply the state change at this point, rather than after the return of the
         * callback, so as to minimize "developer surprise". If the  application calls
         * "picoquic_mark_datagram_ready" after this call, the value set by the
@@ -5208,6 +5489,52 @@ uint8_t* picoquic_format_ready_datagram_frame(picoquic_cnx_t* cnx, picoquic_path
 
             if (datagram_data_context.is_old_api || !datagram_data_context.was_called) {
                 *more_data |= cnx->is_datagram_ready;
+            }
+            else {
+                *more_data |= datagram_data_context.is_active;
+            }
+        }
+    }
+
+    return bytes;
+}
+
+uint8_t* picoquic_format_ready_datagram_frame_multicast(picoquic_multicast_channel_t* channel, uint8_t* bytes,
+    uint8_t* bytes_max, int* more_data, int * ret)
+{
+    uint8_t* bytes0 = bytes;
+
+    if ((bytes = picoquic_frames_varint_encode(bytes, bytes_max, picoquic_frame_type_datagram_l)) == NULL ||
+        bytes + 16 > bytes_max){
+        bytes = bytes0;
+        *more_data = 1;
+    }
+    else {
+        /* Compute the length */
+        size_t allowed_space = bytes_max - bytes;
+        picoquic_datagram_buffer_argument_t datagram_data_context;
+
+        datagram_data_context.bytes0 = bytes0;
+        datagram_data_context.bytes = bytes;
+        datagram_data_context.bytes_max = bytes_max;
+        datagram_data_context.allowed_space = allowed_space;
+        datagram_data_context.after_data = bytes0;
+        datagram_data_context.is_active = 0;
+        // because we cannot set cnx and path_x in datagram_data_context, we must set this to 1 as a workaround
+        datagram_data_context.is_old_api = 1; 
+        datagram_data_context.was_called = 0;
+
+        if ((channel->callback_fn)(channel, 0, (uint8_t*)&datagram_data_context, allowed_space,
+            picoquic_callback_prepare_datagram, channel->callback_ctx, NULL) != 0) {
+            /* something went wrong */
+            DBG_PRINTF("Prepare datagram returns error 0x%x", PICOQUIC_TRANSPORT_INTERNAL_ERROR);
+            bytes = bytes0; /* CHECK: SHOULD THIS BE NULL ? */
+        }
+        else {
+            bytes = datagram_data_context.after_data;
+
+            if (datagram_data_context.is_old_api || !datagram_data_context.was_called) {
+                *more_data |= channel->is_datagram_ready;
             }
             else {
                 *more_data |= datagram_data_context.is_active;
@@ -6207,69 +6534,6 @@ int picoquic_process_ack_of_observed_address_frame(picoquic_cnx_t* cnx, picoquic
     return ret;
 }
 
-picoquic_mc_channel_in_cnx_t* picoquic_add_channel_to_cnx(picoquic_cnx_t* cnx, picoquic_multicast_channel_t* channel) {
-    picoquic_mc_channel_in_cnx_t* new_channel_in_cnx = malloc(sizeof(picoquic_mc_channel_in_cnx_t));
-    if (new_channel_in_cnx == NULL) {
-        fprintf(stderr, "could not create picoquic_mc_channel_in_cnx_t: malloc failed\n");
-        return NULL;
-    }
-
-    // Add channel to cnx struct
-    picoquic_mc_channel_in_cnx_t** new_channel_list = (picoquic_mc_channel_in_cnx_t **)malloc((cnx->nb_mc_channels + 1) * sizeof(picoquic_mc_channel_in_cnx_t *));
-
-    if (new_channel_list == NULL) { 
-        return NULL;
-    }
-
-    if (cnx->mc_channels != NULL) {
-        memset(new_channel_list, 0, (cnx->nb_mc_channels + 1) * sizeof(picoquic_mc_channel_in_cnx_t*));
-        if (cnx->nb_mc_channels > 0) {
-            memcpy(new_channel_list, cnx->mc_channels, cnx->nb_mc_channels * sizeof(picoquic_mc_channel_in_cnx_t *));
-        }
-        free(cnx->mc_channels);
-    }
-    cnx->mc_channels = new_channel_list;
-
-    memset(new_channel_in_cnx, 0, sizeof(picoquic_mc_channel_in_cnx_t));
-
-    new_channel_in_cnx->channel = channel;
-    cnx->mc_channels[cnx->nb_mc_channels] = new_channel_in_cnx;
-    cnx->nb_mc_channels++;
-
-    // Add channel to quic struct if not available
-    picoquic_quic_t* quic = cnx->quic;
-    int found = 0;
-    for (int i = 0; i < quic->nb_mc_channels; i++) {
-        if (quic->mc_channels[i] == channel) {
-            found = 1;
-        }
-    }
-
-    if (found > 0) {
-        return new_channel_in_cnx;
-    }
-
-    picoquic_multicast_channel_t** new_q_channel_list = (picoquic_multicast_channel_t **)malloc((quic->nb_mc_channels + 1) * sizeof(picoquic_multicast_channel_t *));
-
-    if (new_q_channel_list == NULL) { 
-        return NULL;
-    }
-
-    if (quic->mc_channels != NULL) {
-        memset(new_q_channel_list, 0, (quic->nb_mc_channels + 1) * sizeof(picoquic_multicast_channel_t*));
-        if (quic->nb_mc_channels > 0) {
-            memcpy(new_q_channel_list, quic->mc_channels, quic->nb_mc_channels * sizeof(picoquic_multicast_channel_t *));
-        }
-        free(quic->mc_channels);
-    }
-    quic->mc_channels = new_q_channel_list;
-
-    quic->mc_channels[quic->nb_mc_channels] = channel;
-    quic->nb_mc_channels++;
-
-    return new_channel_in_cnx;
-}
-
 /*
  * ================
  * MULTICAST FRAMES
@@ -6311,7 +6575,7 @@ uint8_t* picoquic_format_mc_announce_frame(uint8_t* bytes, uint8_t* bytes_max, p
     }
 
     // Source IP
-    // TODO MC: Make source address configurable
+    // ENHANCE MC: Make source address configurable
     struct sockaddr_storage* src_addr = &path_x->local_addr;
     uint8_t* src_addr_text;
     uint8_t src_addr_text_len;
@@ -6397,6 +6661,7 @@ const uint8_t* picoquic_decode_mc_announce_frame(picoquic_cnx_t* cnx, const uint
 
     uint8_t id_len;
     picoquic_multicast_channel_id_t channel_id;
+    const uint8_t* bytes0 = bytes;
 
     // Channel ID Length
     if ((bytes = picoquic_frames_uint8_decode(bytes, bytes_max, &id_len)) == NULL) {
@@ -6409,14 +6674,22 @@ const uint8_t* picoquic_decode_mc_announce_frame(picoquic_cnx_t* cnx, const uint
 
     if (bytes_copied == 0) {
         return NULL;
-    } 
+    }
 
     bytes += bytes_copied;
 
+    // TODO MC: Move this semantic checks to higher level methods and just stupidly try to parse the frame here?
     // Channel could already exist in cnx if MC_KEY was decoded before MC_ANNOUNCE frame
     if ((channel_found = picoquic_find_multicast_channel_in_cnx(&channel_id, cnx)) != NULL && channel_found->state >= 2) {
-        fprintf(stderr, "Received a duplicate MC_ANNOUNCE for channel\n");
-        return NULL;
+        fprintf(stderr, "Received a duplicate MC_ANNOUNCE for channel, ignoring\n");
+        return picoquic_skip_mc_announce_frame(bytes0, bytes_max, frame_id64);
+    }
+
+    // Also do not allow joining a multicast channel if it is already used in another cnx
+    // ENHANCE MC: Maybe allow using the same multicast channel in different cnx somehow?
+    if (channel_found == NULL && picoquic_find_multicast_channel_global(&channel_id, cnx->quic) != NULL) {
+        fprintf(stderr, "Already using this channel in another connection, ignoring MC_ANNOUNCE\n");
+        return picoquic_skip_mc_announce_frame(bytes0, bytes_max, frame_id64);
     }
     
     picoquic_multicast_channel_t* channel;
@@ -6495,6 +6768,9 @@ const uint8_t* picoquic_decode_mc_announce_frame(picoquic_cnx_t* cnx, const uint
     || (bytes = picoquic_frames_varint_decode(bytes, bytes_max, &channel->max_ack_delay)) == NULL)  {
         return NULL;
     }
+
+    // Add header crypto context to channel (only decryption)
+    picoquic_setup_multicast_crypto_context_header(cnx->quic, &channel->header_secret, &channel->crypto_context, channel->header_protection_algorithm, 0);
 
     picoquic_mc_channel_in_cnx_t* new_channel_in_cnx;
 
@@ -6674,6 +6950,7 @@ const uint8_t* picoquic_decode_mc_key_frame(picoquic_cnx_t* cnx, const uint8_t* 
 
     uint8_t channel_id_len;
     picoquic_multicast_channel_id_t channel_id;
+    const uint8_t* bytes0 = bytes;
 
     // Channel ID Length
     if ((bytes = picoquic_frames_uint8_decode(bytes, bytes_max, &channel_id_len)) == NULL) {
@@ -6689,11 +6966,17 @@ const uint8_t* picoquic_decode_mc_key_frame(picoquic_cnx_t* cnx, const uint8_t* 
     }
 
     picoquic_mc_channel_in_cnx_t* channel_found = picoquic_find_multicast_channel_in_cnx(&channel_id, cnx);
+    picoquic_multicast_channel_t* channel_global = picoquic_find_multicast_channel_global(&channel_id, cnx->quic);
 
     picoquic_multicast_channel_t* channel;
     if (channel_found != NULL) {
         channel = channel_found->channel;
-    } else {
+    } else if (channel_global != NULL) {
+        // TODO MC: Move this semantic checks to higher level methods and just stupidly try to parse the frame here?
+        // Do not allow a channel in multiple connections
+        return picoquic_skip_mc_key_frame(bytes0, bytes_max);
+    } 
+    else {
         channel = malloc(sizeof(picoquic_multicast_channel_t));
         if (channel == NULL) {
             fprintf(stderr, "could not create multicast channel: malloc failed\n");
@@ -6756,6 +7039,9 @@ const uint8_t* picoquic_decode_mc_key_frame(picoquic_cnx_t* cnx, const uint8_t* 
 
     channel->aead_secrets[channel->nb_aead_secrets] = aead;
     channel->nb_aead_secrets++;
+
+    // Add aead crypto context to channel (only decryption)
+    picoquic_setup_multicast_crypto_context_aead(cnx->quic, aead, &channel->crypto_context, channel->aead_algorithm, 0);
 
     // Add channel to cnx if not already done
     picoquic_mc_channel_in_cnx_t* new_channel_in_cnx;
@@ -6927,6 +7213,7 @@ uint8_t* picoquic_format_mc_join_frame(uint8_t* bytes, uint8_t* bytes_max, picoq
         return NULL;
     }
 
+    const uint8_t* bytes0 = bytes;
     uint8_t channel_id_len;
     picoquic_multicast_channel_id_t channel_id;
 
@@ -6945,9 +7232,10 @@ uint8_t* picoquic_format_mc_join_frame(uint8_t* bytes, uint8_t* bytes_max, picoq
 
     picoquic_mc_channel_in_cnx_t* channel_found = picoquic_find_multicast_channel_in_cnx(&channel_id, cnx);
 
+    // TODO MC: Move this semantic checks to higher level methods and just stupidly try to parse the frame here?
     if (channel_found == NULL || channel_found->key_available == 0 || channel_found->state < picoquic_mc_state_announced || channel_found->state >= picoquic_mc_state_retire_pending) {
         fprintf(stderr, "Error: Received a MC_JOIN, but no MC_KEY and/or MC_ANNOUNCE was receved, or channel is already retired\n");
-        return NULL;
+        return picoquic_skip_mc_join_frame(bytes0, bytes_max);
     }
 
     uint64_t limits_seq_number;
@@ -7154,7 +7442,7 @@ const uint8_t* picoquic_decode_mc_state_frame(picoquic_cnx_t* cnx, const uint8_t
         return NULL;
     }
 
-    // Frame type TBC-0c (Application State Code) currently not supported
+    // Frame type TBD-0c (Application State Code) currently not supported
     if (frame_id64 == picoquic_frame_type_mc_state_application) {
         picoquic_connection_error_ex(cnx, PICOQUIC_TRANSPORT_FRAME_FORMAT_ERROR, frame_id64, "Received unsupported MC_STATE frame of type TBD-0c\n");
         return NULL;
@@ -7188,6 +7476,8 @@ const uint8_t* picoquic_decode_mc_state_frame(picoquic_cnx_t* cnx, const uint8_t
     uint64_t reason;
     uint64_t reason_phrase_length;
 
+    picoquic_mc_state_enum state_before = channel_found->state;
+
     if ((bytes = picoquic_frames_varint_decode(bytes, bytes_max, &sequence_number)) != NULL &&
         (bytes = picoquic_frames_uint8_decode(bytes, bytes_max, &state)) != NULL &&
         (bytes = picoquic_frames_varint_decode(bytes, bytes_max, &reason)) != NULL &&
@@ -7203,7 +7493,7 @@ const uint8_t* picoquic_decode_mc_state_frame(picoquic_cnx_t* cnx, const uint8_t
         return NULL;
     }
 
-    // TODO MC: Maybe add more defined behavior for the different state types
+    // ENHANCE MC: Maybe add more defined behavior for the different state types
 
     // MC_STATE(Joined)
     if (state == picoquic_mc_state_frame_joined) {
@@ -7224,7 +7514,7 @@ const uint8_t* picoquic_decode_mc_state_frame(picoquic_cnx_t* cnx, const uint8_t
             // ignoring MC_STATE frame 
             fprintf(stdout, "Notice: MC_STATE(Joined) frame received outside of join process, ignoring frame\n");
         }
-    } 
+    }
 
     // MC_STATE(Declined Join)
     if (state == picoquic_mc_state_frame_declined_join) {
@@ -7270,6 +7560,16 @@ const uint8_t* picoquic_decode_mc_state_frame(picoquic_cnx_t* cnx, const uint8_t
         else {
             // ignoring MC_STATE frame 
             fprintf(stdout, "Notice: MC_STATE(Retired) frame received in other state than 'retire pending', ignoring frame\n");
+        }
+    }
+
+    // Server callback when state changed
+    if (state_before != channel_found->state) {
+        if (channel_found->state == picoquic_mc_state_join_attempted) {
+            cnx->callback_fn(cnx, 0, NULL, 0, picoquic_callback_multicast_join_attempted, cnx->callback_ctx, &channel_found->channel->channel_id);
+        }
+        if (channel_found->state == picoquic_mc_state_left) {
+            cnx->callback_fn(cnx, 0, NULL, 0, picoquic_callback_multicast_left, cnx->callback_ctx, &channel_found->channel->channel_id);
         }
     }
 
@@ -7517,6 +7817,124 @@ uint8_t* picoquic_format_bdp_frame(picoquic_cnx_t* cnx, uint8_t* bytes, uint8_t*
     }
 
     return bytes;
+}
+
+/*
+ * Decoding of the received frames.
+ *
+ * In some cases, the expected frames are "restricted" to only ACK, STREAM 0 and PADDING.
+ */
+
+int picoquic_decode_frames_multicast(picoquic_mc_channel_in_cnx_t* ch_in_cnx, const uint8_t* bytes,
+    size_t bytes_maxsize,
+    picoquic_stream_data_node_t* received_data,
+    struct sockaddr* addr_from,
+    struct sockaddr* addr_to,
+    uint64_t pn64,
+    uint64_t current_time)
+{
+    const uint8_t *bytes_max = bytes + bytes_maxsize;
+    int ack_needed = 0;
+    picoquic_packet_data_t packet_data;
+
+    memset(&packet_data, 0, sizeof(packet_data));
+
+    while (bytes != NULL && bytes < bytes_max) {
+        uint8_t first_byte = bytes[0];
+
+        if (PICOQUIC_IN_RANGE(first_byte, picoquic_frame_type_stream_range_min, picoquic_frame_type_stream_range_max)) {
+            // TODO MC: Support STREAM frame in multicast
+            // bytes = picoquic_decode_stream_frame(cnx, bytes, bytes_max, received_data, current_time);
+            ack_needed = 1;
+        }
+        else if (first_byte != picoquic_frame_type_padding
+            && first_byte != picoquic_frame_type_ping
+            && first_byte != picoquic_frame_type_reset_stream
+            && first_byte != picoquic_frame_type_datagram
+            && first_byte != picoquic_frame_type_datagram_l
+            && first_byte != picoquic_frame_type_mc_key
+            && first_byte != picoquic_frame_type_mc_integrity
+            && first_byte != picoquic_frame_type_mc_integrity_l
+            && first_byte != picoquic_frame_type_mc_leave
+            && first_byte != picoquic_frame_type_mc_retire
+        ) {
+            fprintf(stdout,"Unsupported frame in multicast packet: %x\n", first_byte);
+            bytes = NULL;
+            break;
+        }
+        else {
+            switch (first_byte) {
+            case picoquic_frame_type_padding:
+                bytes = picoquic_skip_0len_frame(bytes, bytes_max);
+                break;
+            case picoquic_frame_type_reset_stream:
+                // TODO MC: Support RESET_STREAM frame in multicast
+                // bytes = picoquic_decode_stream_reset_frame(cnx, bytes, bytes_max);
+                ack_needed = 1;
+                break;
+            case picoquic_frame_type_ping:
+                bytes = picoquic_skip_0len_frame(bytes, bytes_max);
+                ack_needed = 1;
+                break;
+            case picoquic_frame_type_datagram:
+            case picoquic_frame_type_datagram_l:
+                /* Datagram carrying packets are acked, but not repeated */
+                ack_needed = 1;
+                bytes = picoquic_decode_datagram_frame_multicast(ch_in_cnx->channel, bytes, bytes_max);
+                break;
+            default: {
+                uint64_t frame_id64;
+
+                if ((bytes = picoquic_frames_varint_decode(bytes, bytes_max, &frame_id64)) != NULL) {
+                    switch (frame_id64) {
+                    case picoquic_frame_type_mc_key: 
+                        // TODO MC: Support MC_KEY frame via multicast
+                        // bytes = picoquic_decode_mc_key_frame(cnx, bytes, bytes_max); 
+                        ack_needed = 1;
+
+                        // CLEAN MC: Refactor event/error logging to qlog
+                        // if (bytes != NULL) {
+                        //     picoquic_multicast_channel_t* channel = cnx->mc_channels[cnx->nb_mc_channels-1]->channel;
+
+                        //     picoquic_multicast_aead_secret_t* aead = channel->aead_secrets[channel->nb_aead_secrets-1];
+                        //     fprintf(stdout, "Got MC_KEY frame for channel id ");
+                        //     print_hex_bytes(channel->channel_id.id, channel->channel_id.id_len);
+
+                        //     fprintf(stdout, "\n -- Key Sequence number: %lu\n", aead->key_seq_number);
+                        //     fprintf(stdout, " -- From Packet number: %lu\n", aead->from_pkt_number);
+                        //     fprintf(stdout, " -- Secret length: %lu\n", aead->secret_len);
+                        // } 
+                        // if (bytes == NULL) {
+                        //     fprintf(stdout, "ERROR: bytes == NULL after decoding MC_KEY frame\n");
+                        // }
+                        
+                        break;
+                    default:
+                        /* Not implemented yet! */
+                        DBG_PRINTF("Unknown frame type received via multicast, Error 0x%x, Frame ID 0x%x",
+                             PICOQUIC_TRANSPORT_FRAME_FORMAT_ERROR, frame_id64);
+                        bytes = NULL;
+                        break;
+                    }
+                }
+                break;
+            }
+            }
+        }
+    }
+
+    if (bytes != NULL) {
+        // ENHANCE MC: Update congestion control variables when implementing
+        // process_decoded_packet_data(cnx, path_x, epoch, current_time, &packet_data);
+
+        if (ack_needed) {
+            ch_in_cnx->latest_receive_time = current_time;
+            // TODO MC: Implement MC_ACK frame
+            // picoquic_set_ack_needed(cnx, current_time, pc, path_x, 0);
+        }
+    }
+
+    return bytes != NULL ? 0 : PICOQUIC_ERROR_DETECTED;
 }
 
 /*
@@ -7863,17 +8281,17 @@ int picoquic_decode_frames(picoquic_cnx_t* cnx, picoquic_path_t * path_x, const 
                             ack_needed = 1;
 
                             // CLEAN MC: Refactor event/error logging to qlog
-                            if (bytes != NULL) {
-                                picoquic_multicast_channel_t* channel = cnx->mc_channels[cnx->nb_mc_channels-1]->channel;
-                                picoquic_mc_channel_in_cnx_t* ch_in_cnx = picoquic_find_multicast_channel_in_cnx(&channel->channel_id, cnx);
+                            // if (bytes != NULL) {
+                            //     picoquic_multicast_channel_t* channel = cnx->mc_channels[cnx->nb_mc_channels-1]->channel;
+                            //     picoquic_mc_channel_in_cnx_t* ch_in_cnx = picoquic_find_multicast_channel_in_cnx(&channel->channel_id, cnx);
 
-                                fprintf(stdout, " -- Channel id ");
-                                print_hex_bytes(channel->channel_id.id, channel->channel_id.id_len);
-                                fprintf(stdout, "\n -- State Seq number: %lu\n", ch_in_cnx->latest_state_sequence_available);
-                                fprintf(stdout, " -- New state (picoquic-internal-code): %u\n", ch_in_cnx->state);
-                            } 
+                            //     fprintf(stdout, " -- Channel id ");
+                            //     print_hex_bytes(channel->channel_id.id, channel->channel_id.id_len);
+                            //     fprintf(stdout, "\n -- State Seq number: %lu\n", ch_in_cnx->latest_state_sequence_available);
+                            //     fprintf(stdout, " -- New state (picoquic-internal-code): %u\n", ch_in_cnx->state);
+                            // } 
                             if (bytes == NULL) {
-                                fprintf(stdout, "ERROR: bytes == NULL after decoding MC_KEY frame\n");
+                                fprintf(stdout, "ERROR: bytes == NULL after decoding MC_STATE frame\n");
                             }
                             
                             break;

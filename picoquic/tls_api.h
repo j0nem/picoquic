@@ -108,6 +108,12 @@ int picoquic_setup_initial_master_secret(
 
 int picoquic_compute_multicast_secrets(picoquic_quic_t * quic, picoquic_multicast_channel_t* channel);
 
+int picoquic_setup_multicast_crypto_context_aead(picoquic_quic_t* quic, picoquic_multicast_aead_secret_t* mc_aead,
+    picoquic_crypto_context_t* crypto_context, int cipher, int is_server);
+
+int picoquic_setup_multicast_crypto_context_header(picoquic_quic_t*, picoquic_multicast_header_secret_t* mc_header,
+    picoquic_crypto_context_t* crypto_context, int cipher, int is_server);
+
 int picoquic_setup_initial_secrets(
     ptls_cipher_suite_t * cipher,
     uint8_t * master_secret,

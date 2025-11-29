@@ -333,9 +333,13 @@ typedef enum {
     picoquic_callback_path_address_observed, /* The peer has reported an address for the path */
     picoquic_callback_app_wakeup, /* wakeup timer set by application has expired */
     picoquic_callback_next_path_allowed, /* There are enough path_id and connection ID available for the next path */
-    picoquic_callback_multicast_join_possible, /* MC_JOIN frame has been received and client is able to join */
-    picoquic_callback_multicast_stream_data, /* Stream frame has been received over multicast */
-    picoquic_callback_multicast_datagram, /* Datagram frame has been received over multicast */
+    /* Multicast events */
+    picoquic_callback_multicast_join_possible, /* (client event) MC_JOIN frame has been received and client is able to join */
+    picoquic_callback_multicast_join_attempted, /* (server event) Multicast client sent MC_STATUS(Joined) */
+    picoquic_callback_multicast_join_confirmed, /* (server event) Multicast client sent MC_ACK for first time */
+    picoquic_callback_multicast_left, /* (server event) Multicast client sent MC_STATUS(Declined Join) or MC_STATUS(Left) */
+    picoquic_callback_multicast_stream_data, /* (client event) Stream frame has been received over multicast */
+    picoquic_callback_multicast_datagram, /* (client event) Datagram frame has been received over multicast */
 } picoquic_call_back_event_t;
 
 typedef struct st_picoquic_tp_prefered_address_t {
@@ -449,6 +453,10 @@ uint64_t picoquic_get_quic_time(picoquic_quic_t* quic); /* connection time, comp
  * parameter stream_ctx provides the application supplied stream context.
  */
 typedef int (*picoquic_stream_data_cb_fn)(picoquic_cnx_t* cnx,
+    uint64_t stream_id, uint8_t* bytes, size_t length,
+    picoquic_call_back_event_t fin_or_event, void* callback_ctx, void * stream_ctx);
+
+typedef int (*picoquic_stream_data_mc_cb_fn)(picoquic_multicast_channel_t* channel,
     uint64_t stream_id, uint8_t* bytes, size_t length,
     picoquic_call_back_event_t fin_or_event, void* callback_ctx, void * stream_ctx);
 
@@ -1178,6 +1186,9 @@ int picoquic_is_cnx_backlog_empty(picoquic_cnx_t* cnx);
 void picoquic_set_callback(picoquic_cnx_t* cnx,
     picoquic_stream_data_cb_fn callback_fn, void* callback_ctx);
 
+void picoquic_set_callback_multicast(picoquic_multicast_channel_t* channel,
+    picoquic_stream_data_mc_cb_fn callback_fn, void* callback_ctx);
+
 picoquic_stream_data_cb_fn picoquic_get_default_callback_function(picoquic_quic_t * quic);
 
 void * picoquic_get_default_callback_context(picoquic_quic_t * quic);
@@ -1235,6 +1246,12 @@ int picoquic_incoming_packet_ex(
 * The port numbers in the socket addresses structures are expressed in network order.
  */
 
+
+int picoquic_prepare_next_packet_multicast(picoquic_quic_t* quic,
+    uint8_t* send_buffer, size_t send_buffer_max, size_t* send_length,
+    struct sockaddr_storage* p_addr_to, struct sockaddr_storage* p_addr_from,
+    picoquic_multicast_channel_t* channel, size_t * send_msg_size);
+
 int picoquic_prepare_next_packet_ex(picoquic_quic_t* quic, 
     uint64_t current_time, uint8_t* send_buffer, size_t send_buffer_max, size_t* send_length, 
     struct sockaddr_storage* p_addr_to, struct sockaddr_storage* p_addr_from, int* if_index,
@@ -1244,6 +1261,10 @@ int picoquic_prepare_next_packet(picoquic_quic_t* quic,
     uint64_t current_time, uint8_t* send_buffer, size_t send_buffer_max, size_t* send_length,
     struct sockaddr_storage* p_addr_to, struct sockaddr_storage* p_addr_from, int* if_index,
     picoquic_connection_id_t* p_logcid, picoquic_cnx_t** p_last_cnx);
+
+int picoquic_prepare_packet_multicast(picoquic_multicast_channel_t* channel,
+    uint8_t* send_buffer, size_t send_buffer_max, size_t* send_length,
+    struct sockaddr_storage * p_addr_to, struct sockaddr_storage * p_addr_from, size_t* send_msg_size);
 
 int picoquic_prepare_packet_ex(picoquic_cnx_t* cnx,
     uint64_t current_time, uint8_t* send_buffer, size_t send_buffer_max, size_t* send_length,
@@ -1479,6 +1500,7 @@ int picoquic_discard_stream(picoquic_cnx_t* cnx, uint64_t stream_id, uint16_t lo
  */
 int picoquic_mark_datagram_ready(picoquic_cnx_t* cnx, int is_ready);
 int picoquic_mark_datagram_ready_path(picoquic_cnx_t* cnx, uint64_t unique_path_id, int is_path_ready);
+int picoquic_mark_datagram_ready_multicast(picoquic_multicast_channel_t* channel, int is_ready);
 
 /* If a datagram is marked active, the application will receive a callback with
  * event type "picoquic_callback_prepare_datagram" when the transport is ready to

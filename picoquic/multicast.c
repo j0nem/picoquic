@@ -44,33 +44,6 @@ struct picoquic_mcrx_ctx_info {
   picoquic_multicast_channel_t* channel;
 };
 
-/* Call custom do_receive callback function OR mcrx_ctx_receive_packets to receive packets */
-// TODO MC: is this function actually needed? Probably only if mcrx_ctx_set_receive_socket_handlers method does not work
-int picoquic_mcrx_receive_packets(struct mcrx_ctx *ctx, 
-    int (*do_receive)(intptr_t handle, int fd), 
-    intptr_t* do_handle_val,
-    int fd) 
-{
-    if (ctx == NULL) {
-        return -1;
-    }
-
-    int ret;
-    if (do_receive != NULL)  {
-        ret = (*do_receive)(*do_handle_val, fd);
-    } else {
-        ret = mcrx_ctx_receive_packets(ctx);
-    }
-
-    if (ret != MCRX_ERR_OK &&
-        ret != MCRX_ERR_NOTHING_JOINED &&
-        ret != MCRX_ERR_TIMEDOUT) {
-        return -1;
-    }
-
-    return 0;
-}
-
 /* Callback called by mcrx when socket was added */
 int picoquic_mcrx_added_socket_cb(struct mcrx_ctx* ctx,
     intptr_t sub,
@@ -85,7 +58,7 @@ int picoquic_mcrx_added_socket_cb(struct mcrx_ctx* ctx,
     channel->socket_open = 1;
 
     // do_receive call maybe not needed?
-    // TODO MC: Figure out how to use the do_receive callback
+    // CHECK MC: Figure out how to use the do_receive callback or remove
     do_receive(sub, fd);
     return MCRX_ERR_OK;
 }
@@ -98,7 +71,6 @@ int picoquic_mcrx_removed_socket_cb(
     // Remove socket to picoquic_quic context, so that it is excluded from picoquic_packet_loop_select's select() statement
     struct picoquic_mcrx_ctx_info* info = (struct picoquic_mcrx_ctx_info*)mcrx_ctx_get_userdata(ctx);
     picoquic_multicast_channel_t* channel = info->channel;
-    int found = 0;
 
     channel->fd = 0;
     channel->socket_open = 0;
@@ -135,8 +107,6 @@ int picoquic_mcrx_initialize(struct mcrx_ctx **ctxp, picoquic_multicast_channel_
     err = mcrx_ctx_set_receive_socket_handlers(ctx,
         picoquic_mcrx_added_socket_cb, picoquic_mcrx_removed_socket_cb);
 
-    // TODO MC: Maybe add picoquic_quic context to mcrx_ctx userdata for socket add/remove callbacks
-        
     if (err != 0) {
         ctx = mcrx_ctx_unref(ctx);
         fprintf(stdout, "Error in picoquic_mcrx_initialize: mcrx_ctx_set_receive_socket_handlers returned error\n");
@@ -144,22 +114,6 @@ int picoquic_mcrx_initialize(struct mcrx_ctx **ctxp, picoquic_multicast_channel_
     }
 
     return 0;
-}
-
-/* Callback called by mcrx to handle received packets */
-int picoquic_mcrx_receive_cb(struct mcrx_packet* pkt) {
-    struct mcrx_subscription* sub = mcrx_packet_get_subscription(pkt);
-    struct picoquic_mcrx_sub_info* info = (struct picoquic_mcrx_sub_info*)mcrx_subscription_get_userdata(sub);
-
-    info->nb_packets++;
-    uint8_t* data = 0;
-    int len = mcrx_packet_get_contents(pkt, &data);
-
-    fprintf(stdout, "picoquic_mcrx_receive_cb called!\n");
-
-    // TODO MC: Figure out how to use this callback (if it is actually called in our setup), maybe call something like `picoquic_incoming_packet_ex` here
-
-    return MCRX_RECEIVE_CONTINUE;
 }
 
 /* Join the channel via mcrx */
@@ -217,7 +171,6 @@ int picoquic_mcrx_join(struct mcrx_ctx **ctxp, picoquic_mc_channel_in_cnx_t *ch_
 
     subinfo->ch_in_cnx = ch_in_cnx;
 
-    mcrx_subscription_set_receive_cb(sub, picoquic_mcrx_receive_cb);
     mcrx_subscription_set_userdata(sub, (intptr_t)subinfo);
 
     ch_in_cnx->mcrx_subscription = sub;

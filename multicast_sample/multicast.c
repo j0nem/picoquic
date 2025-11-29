@@ -49,10 +49,9 @@
 static void usage(char const * multicast_name)
 {
     fprintf(stderr, "Usage:\n");
-    fprintf(stderr, "    %s client server_name port folder *queried_file\n", multicast_name);
-    // fprintf(stderr, "    %s background server_name port folder\n", multicast_name);
+    fprintf(stderr, "    %s client server_name port folder\n", multicast_name);
     fprintf(stderr, "or :\n");
-    fprintf(stderr, "    %s server port cert_file private_key_file folder\n", multicast_name);
+    fprintf(stderr, "    %s server port_server port_sender cert_file private_key_file served_file_name\n", multicast_name);
     exit(1);
 }
 
@@ -75,35 +74,23 @@ int main(int argc, char** argv)
         usage(argv[0]);
     }
     else if (strcmp(argv[1], "client") == 0) {
-        if (argc < 6) {
+        if (argc < 5) {
             usage(argv[0]);
         }
         else {
             int server_port = get_port(argv[0], argv[3]);
-            char const** file_names = (char const **)(argv + 5);
-            int nb_files = argc - 5;
-
-            exit_code = picoquic_multicast_client(argv[2], server_port, argv[4], nb_files, file_names);
+            exit_code = picoquic_multicast_client(argv[2], server_port, argv[4]);
         }
     }
-    // CHECK MC: Implement or remove background function
-    // else if (strcmp(argv[1], "background") == 0) {
-    //     if (argc != 5) {
-    //         usage(argv[0]);
-    //     }
-    //     else {
-    //         int server_port = get_port(argv[0], argv[3]);
-
-    //         exit_code = picoquic_multicast_background(argv[2], server_port, argv[4]);
-    //     }
-    // }
     else if (strcmp(argv[1], "server") == 0) {
-        if (argc != 6) {
+        if (argc != 7) {
             usage(argv[0]);
         }
         else {
             int server_port = get_port(argv[0], argv[2]);
-            exit_code = picoquic_multicast_server(server_port, argv[3], argv[4], argv[5]);
+            int sender_port = get_port(argv[0], argv[3]);
+
+            exit_code = picoquic_multicast_server(server_port, sender_port, argv[4], argv[5], argv[6]);
         }
     }
     else

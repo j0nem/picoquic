@@ -19,10 +19,13 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+
 #ifndef PICOQUIC_MULTICAST_H
 #define PICOQUIC_MULTICAST_H
 /* Header file for the picoquic multicast project.
- * It contains the definitions common to client and server */
+* It contains the definitions common to client and server */
+
+#include "picoquic_packet_loop.h"
 
 #ifdef __cplusplus
 extern "C"
@@ -32,15 +35,10 @@ extern "C"
 // The demo program currently uses fixed example values below
 #define PICOQUIC_MULTICAST_ALPN "picoquic_multicast_test"
 #define PICOQUIC_MULTICAST_SNI "localhost"
-#define PICOQUIC_MULTICAST_SOURCE_IP "127.0.0.1"
-#define PICOQUIC_MULTICAST_SOURCE_PORT 4433
 #define PICOQUIC_MULTICAST_GROUP_IP "232.10.1.12"
 #define PICOQUIC_MULTICAST_GROUP_PORT 1234
 
 #define PICOQUIC_MULTICAST_MAX_CLIENTS 8
-
-#define PICOQUIC_MULTICAST_CLIENT_IP "127.0.0.1"
-#define PICOQUIC_MULTICAST_CLIENT_PORT 4422
 
 #define PICOQUIC_MULTICAST_NO_ERROR 0
 #define PICOQUIC_MULTICAST_INTERNAL_ERROR 0x101
@@ -49,19 +47,46 @@ extern "C"
 #define PICOQUIC_MULTICAST_FILE_READ_ERROR 0x104
 #define PICOQUIC_MULTICAST_FILE_CANCEL_ERROR 0x105
 
-#define PICOQUIC_MULTICAST_CLIENT_TICKET_STORE "multicast_ticket_store.bin";
-#define PICOQUIC_MULTICAST_CLIENT_TOKEN_STORE "multicast_token_store.bin";
-#define PICOQUIC_MULTICAST_CLIENT_QLOG_DIR "./log";
-#define PICOQUIC_MULTICAST_SERVER_QLOG_DIR "./log";
+#define PICOQUIC_MULTICAST_CLIENT_DATA_FILENAME "output.txt"
+#define PICOQUIC_MULTICAST_CLIENT_TICKET_STORE "multicast_ticket_store.bin"
+#define PICOQUIC_MULTICAST_CLIENT_TOKEN_STORE "multicast_token_store.bin"
+#define PICOQUIC_MULTICAST_CLIENT_QLOG_DIR "./log"
+#define PICOQUIC_MULTICAST_SERVER_QLOG_DIR "./log"
 
-#define PICOQUIC_MULTICAST_BACKGROUND_MAX_FILES 32
+#define PICOQUIC_MULTICAST_SENDER_MAX_FILES 32
 
-    int picoquic_multicast_client(char const *server_name, int server_port, char const *default_dir,
-                                  int nb_files, char const **file_names);
+typedef struct st_multicast_sender_datagram_ctx_t {
+    struct st_multicast_sender_datagram_ctx_t* next_datagram;
+    struct st_multicast_sender_datagram_ctx_t* previous_datagram;
+    size_t name_length;
+    size_t file_length;
+    size_t file_sent;
+    FILE* F;
+    unsigned int is_name_sent : 1;
+    unsigned int is_file_open : 1;
+    unsigned int is_datagram_finished : 1;
+} multicast_sender_datagram_ctx_t;
 
-    int picoquic_multicast_background(char const *server_name, int server_port, char const *default_dir);
+typedef struct st_multicast_sender_ctx_t {
+    picoquic_quic_t* quic;
+    picoquic_multicast_channel_t *mc_channel;
+    char const* file_path;
+    multicast_sender_datagram_ctx_t* first_datagram;
+    multicast_sender_datagram_ctx_t* last_datagram;
+    int is_disconnected;
+} multicast_sender_ctx_t;
 
-    int picoquic_multicast_server(int server_port, const char *pem_cert, const char *pem_key, const char *default_dir);
+int picoquic_multicast_client(char const *server_name, int server_port, char const *default_dir);
+
+int picoquic_multicast_sender_start(int server_port, 
+    const char* server_cert, const char* server_key,
+    char const* file_path, 
+    picoquic_multicast_channel_t* channel, picoquic_network_thread_ctx_t** thread_ctx,
+    multicast_sender_ctx_t* sender_ctx);
+    
+void picoquic_multicast_sender_stop(picoquic_network_thread_ctx_t* thread_ctx, multicast_sender_ctx_t* sender_ctx);
+
+int picoquic_multicast_server(int server_port, int sender_port, const char *server_cert, const char *server_key, const char *served_file);
 
 #ifdef __cplusplus
 }

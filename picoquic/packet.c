@@ -487,6 +487,87 @@ int picoquic_parse_packet_header(
     return ret;
 }
 
+int picoquic_parse_packet_header_multicast(
+    picoquic_quic_t* quic,
+    const uint8_t* bytes,
+    size_t length,
+    const struct sockaddr* addr_from,
+    picoquic_packet_header_multicast* phm,
+    picoquic_mc_channel_in_cnx_t** ch_in_cnx)
+{
+    int ret = 0;
+
+    /* Initialize the PH structure to zero, but version index to -1 (error) */
+    memset(phm, 0, sizeof(picoquic_packet_header_multicast));
+
+    /* Only 1-RTT packets allowed in multicast channels --> only short headers allowed */
+    if ((bytes[0] & 0x80) == 0x80) {
+        return -1;
+    }
+
+    // ENHANCE MC: In the current implementation we always use
+    // local_cnxid_length length for channel id length
+    uint8_t chid_length = quic->local_cnxid_length;
+
+    if ((int)length >= 1 + chid_length) {
+        /* We can identify the channel by its ID */
+        phm->offset = (size_t)1 + picoquic_parse_multicast_channel_id(bytes + 1, chid_length, &phm->channel_id);
+        if (*ch_in_cnx == NULL)
+        {
+            if (phm->channel_id.id_len > 0) {
+                // currently, we only allow a channel only to be added to one cnx in client mode
+                // --> this is why we will find the correct ch_in_cnx here
+                // ENHANCE MC: Change this when adding support for having one channel multiple cnx on client side
+                picoquic_multicast_channel_t* channel_global = picoquic_find_multicast_channel_global(&phm->channel_id, quic);
+
+                if (channel_global != NULL && channel_global->nb_used_in_cnx > 0 && channel_global->used_in_cnx[0] != NULL) {
+                    *ch_in_cnx = channel_global->used_in_cnx[0];
+                }
+            }
+            else {
+               // zero length channel ID is not allowed
+               ret = -1;
+            }
+        }
+    }
+    else {
+        phm->ptype = picoquic_packet_error;
+        phm->offset = length;
+        phm->payload_length = 0;
+    }
+
+    if (*ch_in_cnx != NULL) {
+        phm->quic_bit_is_zero = (bytes[0] & 0x40) == 0;
+
+        if (!phm->quic_bit_is_zero) {
+            phm->ptype = picoquic_packet_1rtt_protected;
+        } else {
+            phm->ptype = picoquic_packet_error;
+        }
+
+        phm->has_spin_bit = 1;
+        phm->spin = (bytes[0] >> 5) & 1;
+        phm->pn_offset = phm->offset;
+        phm->pn = 0;
+        phm->pnmask = 0;
+        phm->key_phase = ((bytes[0] >> 2) & 1); /* Initialize here so that simple tests with unencrypted headers can work */
+
+        if (length < phm->offset || phm->ptype == picoquic_packet_error) {
+            ret = -1;
+            phm->payload_length = 0;
+        }
+        else {
+            phm->payload_length = (uint16_t)(length - phm->offset);
+        }
+    }
+    else {
+        /* This may be a packet to a forgotten channel */
+        phm->payload_length = (uint16_t)((length > phm->offset) ? length - phm->offset : 0);
+    }
+
+    return ret;
+}
+
 
 /* The packet number logic */
 uint64_t picoquic_get_packet_number64(uint64_t highest, uint64_t mask, uint32_t pn)
@@ -605,6 +686,84 @@ int picoquic_remove_header_protection_inner(
     return ret;
 }
 
+int picoquic_remove_header_protection_inner_multicast(
+    uint8_t* bytes,
+    size_t length,
+    uint8_t* decrypted_bytes,
+    picoquic_packet_header_multicast* phm,
+    void * pn_enc)
+{
+    int ret = 0;
+
+    if (pn_enc != NULL)
+    {
+        /* The header length is not yet known, will only be known after the sequence number is decrypted */
+        size_t mask_length = 5;
+        size_t sample_offset = phm->pn_offset + 4;
+        size_t sample_size = picoquic_pn_iv_size(pn_enc);
+        uint8_t mask_bytes[5] = { 0, 0, 0, 0, 0 };
+
+        if (sample_offset + sample_size > length)
+        {
+            /* return an error */
+            /* Invalid packet format. Avoid crash! */
+            phm->pn = 0xFFFFFFFF;
+            phm->pnmask = 0xFFFFFFFF00000000ull;
+            phm->offset = phm->pn_offset;
+
+            DBG_PRINTF("Invalid packet length, type: %d, epoch: %d, pn-offset: %d, length: %d\n",
+                phm->ptype, (int)phm->pn_offset, (int)length);
+        }
+        else
+        {   
+            /* Decode */
+            uint8_t first_byte = bytes[0];
+
+            // Only short header allowed without any extensions
+            if ((first_byte & 0x80) != 0 || phm->ptype != picoquic_packet_1rtt_protected) {
+                return -1;
+            }
+
+            uint8_t first_mask = 0x1F;
+            uint8_t pn_l;
+            uint32_t pn_val = 0;
+
+            memcpy(decrypted_bytes, bytes, phm->pn_offset);
+            picoquic_pn_encrypt(pn_enc, bytes + sample_offset, mask_bytes, mask_bytes, mask_length);
+            /* Decode the first byte */
+            first_byte ^= (mask_bytes[0] & first_mask);
+            pn_l = (first_byte & 3) + 1;
+            phm->pnmask = (0xFFFFFFFFFFFFFFFFull);
+            decrypted_bytes[0] = first_byte;
+
+            /* Packet encoding is 1 to 4 bytes */
+            for (uint8_t i = 1; i <= pn_l; i++) {
+                pn_val <<= 8;
+                decrypted_bytes[phm->offset] = bytes[phm->offset]^mask_bytes[i];
+                pn_val += decrypted_bytes[phm->offset++];
+                phm->pnmask <<= 8;
+            }
+
+            phm->pn = pn_val;
+            phm->payload_length -= pn_l;
+            phm->key_phase = ((first_byte >> 2) & 1);
+        }
+    }
+    else {
+        /* The pn_enc algorithm was not initialized. Avoid crash! */
+        phm->pn = 0xFFFFFFFF;
+        phm->pnmask = 0xFFFFFFFF00000000ull;
+        phm->offset = phm->pn_offset;
+
+        DBG_PRINTF("PN dec not ready, type: %d, pn: %d\n",
+            phm->ptype, (int)phm->pn);
+
+        ret = PICOQUIC_ERROR_AEAD_NOT_READY;
+    }
+
+    return ret;
+}
+
 int picoquic_remove_header_protection(picoquic_cnx_t* cnx,
     uint8_t* bytes,
     uint8_t * decrypted_bytes,
@@ -617,6 +776,26 @@ int picoquic_remove_header_protection(picoquic_cnx_t* cnx,
     picoquic_sack_list_t* sack_list = picoquic_sack_list_from_cnx_context(cnx, ph->pc, ph->l_cid);
     ret = picoquic_remove_header_protection_inner(bytes, length, decrypted_bytes, ph,
         pn_enc, cnx->is_loss_bit_enabled_incoming, picoquic_sack_list_last(sack_list));
+
+    return ret;
+}
+
+int picoquic_remove_header_protection_multicast(picoquic_mc_channel_in_cnx_t* ch_in_cnx,
+    uint8_t* bytes,
+    uint8_t * decrypted_bytes,
+    picoquic_packet_header_multicast* phm)
+{
+    int ret = 0;
+    picoquic_multicast_channel_t* channel = ch_in_cnx->channel;
+    size_t length = phm->offset + phm->payload_length; /* this may change after decrypting the PN */
+    void * pn_enc = channel->crypto_context.pn_dec;
+
+    // Currently, we don't use packet number "compression" in multicast packets
+    // This means: pn = pn64 (max. 32 bit packet number)
+    // ENHANCE MC: packet number encoding/decoding can be optimized
+
+    ret = picoquic_remove_header_protection_inner_multicast(bytes, length, decrypted_bytes, phm,
+        pn_enc);
 
     return ret;
 }
@@ -758,6 +937,49 @@ size_t picoquic_remove_packet_protection(picoquic_cnx_t* cnx,
     return decoded;
 }
 
+/*
+ * Remove packet protection
+ */
+size_t picoquic_remove_packet_protection_multicast(picoquic_mc_channel_in_cnx_t* ch_in_cnx,
+    uint8_t* bytes, 
+    uint8_t* decoded_bytes,
+    picoquic_packet_header_multicast* phm,
+    uint64_t current_time, int * already_received)
+{
+    size_t decoded;
+
+    /* verify that the packet is new */
+    if (already_received != NULL) {
+        if (picoquic_is_pn_already_received_multicast(ch_in_cnx, phm->l_cid, (uint64_t) phm->pn) != 0) {
+            /* Set error type: already received */
+            *already_received = 1;
+        }
+        else {
+            *already_received = 0;
+        }
+    }
+
+    int need_integrity_check = 1;
+    
+    // ENHANCE MC: Add key rotation support here
+    // picoquic_ack_context_t* ack_ctx = &ch_in_cnx->ack_ctx;
+    
+    /* AEAD Decrypt */
+    decoded = picoquic_aead_decrypt_generic(decoded_bytes + phm->offset,
+        bytes + phm->offset, phm->payload_length, (uint64_t)phm->pn, decoded_bytes, phm->offset, 
+        ch_in_cnx->channel->crypto_context.aead_decrypt);
+
+    if (need_integrity_check && decoded > phm->payload_length) {
+        ch_in_cnx->crypto_failure_count++;
+        if (ch_in_cnx->crypto_failure_count > picoquic_aead_integrity_limit(ch_in_cnx->channel->crypto_context.aead_decrypt)) {
+            DBG_PRINTF("AEAD Integrity limit reached after 0x%" PRIx64 " failed decryptions.", ch_in_cnx->crypto_failure_count);
+        }
+    }
+
+    /* by conventions, values larger than input indicate error */
+    return decoded;
+}
+
 int picoquic_parse_header_and_decrypt(
     picoquic_quic_t* quic,
     const uint8_t* bytes,
@@ -863,6 +1085,67 @@ int picoquic_parse_header_and_decrypt(
                             picoquic_log_app_message(*pcnx, "Found connection from reset secret, ret = %d", ret);
                         }
                     }
+                }
+            }
+        }
+        else {
+            /* Clear text packet. Copy content to decrypted data */
+            memmove(decrypted_data->data, bytes, length);
+            *consumed = length;
+        }
+    }
+    
+    return ret;
+}
+
+int picoquic_parse_header_and_decrypt_multicast(
+    picoquic_quic_t* quic,
+    const uint8_t* bytes,
+    size_t length,
+    size_t packet_length,
+    const struct sockaddr* addr_from,
+    uint64_t current_time,
+    picoquic_stream_data_node_t* decrypted_data,
+    picoquic_packet_header_multicast* phm,
+    picoquic_mc_channel_in_cnx_t** ch_in_cnx,
+    size_t * consumed)
+{
+    /* Parse the clear text header */
+    int already_received = 0;
+    size_t decoded_length = 0;
+    int ret = picoquic_parse_packet_header_multicast(quic, bytes, length, addr_from, phm, ch_in_cnx);
+
+    if (ret == 0 ) {
+        if (phm->ptype != picoquic_packet_error) {
+            /* TODO: clarify length, payload length, packet length -- special case of initial packet */
+            length = phm->offset + phm->payload_length;
+            *consumed = length;
+
+            if (*ch_in_cnx == NULL) {
+               /* Unexpected packet. Reject, drop and log. */
+                ret = PICOQUIC_ERROR_CNXID_CHECK;
+            }
+
+            if (ret == 0) {
+                /* Remove header protection at this point -- values of bytes will not change */
+                ret = picoquic_remove_header_protection_multicast(*ch_in_cnx, (uint8_t*)bytes, decrypted_data->data, phm);
+
+                if (ret == 0) {
+                    decoded_length = picoquic_remove_packet_protection_multicast(*ch_in_cnx, (uint8_t*)bytes,
+                        decrypted_data->data, phm, current_time, &already_received);
+                }
+                else {
+                    decoded_length = phm->payload_length + 1;
+                }
+
+                if (decoded_length > (length - phm->offset) && ret != PICOQUIC_ERROR_AEAD_NOT_READY) {
+                    ret = PICOQUIC_ERROR_AEAD_CHECK;
+                }
+                else if (already_received != 0) {
+                    ret = PICOQUIC_ERROR_DUPLICATE;
+                }
+                else {
+                    phm->payload_length = (uint16_t)decoded_length;
                 }
             }
         }
@@ -2166,6 +2449,79 @@ void picoquic_ecn_accounting(picoquic_cnx_t* cnx,
 }
 
 /*
+ * Processing of client encrypted multicast packet.
+ */
+int picoquic_incoming_1rtt_multicast(
+    picoquic_mc_channel_in_cnx_t* ch_in_cnx,
+    uint8_t* bytes,
+    picoquic_stream_data_node_t* received_data,
+    picoquic_packet_header_multicast* phm,
+    struct sockaddr* addr_from,
+    struct sockaddr* addr_to,
+    int if_index_to,
+    uint64_t current_time)
+{
+    int ret = 0;
+
+    /* Check the packet */
+    if (ch_in_cnx->state >= picoquic_mc_state_leave_pending || ch_in_cnx->state <= picoquic_mc_state_join_pending) {
+        /* Not yet joined or leaving/left or channel retired -> Just ignore the packet */
+        ret = PICOQUIC_ERROR_UNEXPECTED_PACKET;
+    }
+    else {
+        /* Packet is correct */
+        if (ch_in_cnx->state == picoquic_mc_state_join_attempted) {
+            // When receiving the first multicast packet, set join confirmed state
+            // CHECK MC: Client state change at this point or in ACK processing?
+            ch_in_cnx->state = picoquic_mc_state_join_confirmed;
+        }
+        
+        // CHECK MC: Using spin bit in multicast?
+        // picoquic_spin_function_table[cnx->spin_policy].spinbit_incoming(cnx, path_x, ph);
+
+        /* Accept the incoming frames */
+        ret = picoquic_decode_frames_multicast(ch_in_cnx,
+            bytes + phm->offset, phm->payload_length, received_data,
+            addr_from, addr_to, (uint64_t)phm->pn, current_time);
+
+        if (ret == 0) {
+            /* Compute receive bandwidth */
+            
+            // TODO MC: Compute ACK Gap / ACK Delay considering max_ack_delay for this channel
+
+            // path_x->received += (uint64_t)ph->offset + ph->payload_length +
+            //     picoquic_get_checksum_length(cnx, picoquic_epoch_1rtt);
+            // if (path_x->receive_rate_epoch == 0) {
+            //     path_x->received_prior = cnx->path[path_id]->received;
+            //     path_x->receive_rate_epoch = current_time;
+            // }
+            // else {
+            //     uint64_t delta = current_time - cnx->path[path_id]->receive_rate_epoch;
+            //     if (delta > path_x->smoothed_rtt && delta > PICOQUIC_BANDWIDTH_TIME_INTERVAL_MIN) {
+            //         path_x->receive_rate_estimate = ((cnx->path[path_id]->received - cnx->path[path_id]->received_prior) * 1000000) / delta;
+            //         path_x->received_prior = cnx->path[path_id]->received;
+            //         path_x->receive_rate_epoch = current_time;
+            //         if (path_x->receive_rate_estimate > cnx->path[path_id]->receive_rate_max) {
+            //             path_x->receive_rate_max = cnx->path[path_id]->receive_rate_estimate;
+            //             if (path_id == 0 && !cnx->is_ack_frequency_negotiated) {
+            //                 picoquic_compute_ack_gap_and_delay(cnx, cnx->path[0]->rtt_min, PICOQUIC_ACK_DELAY_MIN,
+            //                     cnx->path[0]->receive_rate_max, &cnx->ack_gap_remote, &cnx->ack_delay_remote);
+            //             }
+            //         }
+            //     }
+            // }
+        }
+
+        // ENHANCE MC: Improve logging
+        // if (ret == 0 && picoquic_cnx_is_still_logging(cnx)) {
+        //     picoquic_log_cc_dump(cnx, current_time);
+        // }
+    }
+
+    return ret;
+}
+
+/*
  * Processing of client encrypted packet.
  */
 int picoquic_incoming_1rtt(
@@ -2346,6 +2702,7 @@ int picoquic_incoming_segment(
     int ret = 0;
     picoquic_cnx_t* cnx = NULL;
     picoquic_packet_header ph;
+    picoquic_packet_header_multicast phm;
     int new_context_created = 0;
     int is_first_segment = 0;
     int is_buffered = 0;
@@ -2353,7 +2710,12 @@ int picoquic_incoming_segment(
     int path_is_not_allocated = 0;
     uint8_t* bytes = NULL;
     picoquic_stream_data_node_t* decrypted_data = picoquic_stream_data_node_alloc(quic);
+    picoquic_mc_channel_in_cnx_t* mc_ch_in_cnx = NULL;
     picoquic_multicast_channel_t* multicast_channel = NULL;
+
+    if (decrypted_data == NULL) {
+        return -1;
+    }
 
     if (quic->nb_mc_channels > 0) {
         uint16_t port = 0;
@@ -2365,58 +2727,65 @@ int picoquic_incoming_segment(
         } 
 
         for (int i = 0; i < quic->nb_mc_channels; i++) {
-            if (quic->mc_channels[i]->local_port == port) {
-                multicast_channel = quic->mc_channels[i];
-                fprintf(stdout, "DEBUG: Detected multicast data from channel: ");
+            if (quic->mc_channels[i]->local_if == if_index_to && quic->mc_channels[i]->local_port == port 
+                && quic->mc_channels[i]->client_mode && quic->mc_channels[i]->nb_used_in_cnx == 1
+            ) {
+                mc_ch_in_cnx = quic->mc_channels[i]->used_in_cnx[0];
+                multicast_channel = mc_ch_in_cnx->channel;
+                fprintf(stdout, "DEBUG: Detected multicast data to port %u, interface %i from channel: ", port, if_index_to);
                 print_hex_bytes(multicast_channel->channel_id.id, multicast_channel->channel_id.id_len);
                 fprintf(stdout, "\n");
             }
         }
     }
-
-    // TODO MC: handle multicast data frames, so that they are not skipped
-
-    if (decrypted_data == NULL) {
-        return -1;
-    }
+    
     /* Parse the header and decrypt the segment */
-    ret = picoquic_parse_header_and_decrypt(quic, raw_bytes, length, packet_length, addr_from,
-        current_time, decrypted_data, &ph, &cnx, consumed, &new_context_created);
-    bytes = decrypted_data->data;
+    if (mc_ch_in_cnx == NULL) {
+        ret = picoquic_parse_header_and_decrypt(quic, raw_bytes, length, packet_length, addr_from,
+            current_time, decrypted_data, &ph, &cnx, consumed, &new_context_created);
+        bytes = decrypted_data->data;
+    } else {
+        ret = picoquic_parse_header_and_decrypt_multicast(quic, raw_bytes, length, packet_length, addr_from,
+            current_time, decrypted_data, &phm, &mc_ch_in_cnx, consumed);
+        bytes = decrypted_data->data;
+    }
 
-    /* Verify that the segment coalescing is for the same destination ID */
-    if (picoquic_is_connection_id_null(previous_dest_id)) {
-        /* This is the first segment in the incoming packet */
-        *previous_dest_id = ph.dest_cnx_id;
-        is_first_segment = 1;
-        *first_cnx = cnx;
+    if (mc_ch_in_cnx == NULL) {
+        /* Verify that the segment coalescing is for the same destination ID */
+        if (picoquic_is_connection_id_null(previous_dest_id)) {
+            /* This is the first segment in the incoming packet */
+            *previous_dest_id = ph.dest_cnx_id;
+            is_first_segment = 1;
+            *first_cnx = cnx;
 
 
-        /* if needed, log that the packet is received */
-        if (cnx != NULL) {
-            picoquic_log_pdu(cnx, 1, current_time, addr_from, addr_to, packet_length);
+            /* if needed, log that the packet is received */
+            if (cnx != NULL) {
+                picoquic_log_pdu(cnx, 1, current_time, addr_from, addr_to, packet_length);
+            }
+            else {
+                picoquic_log_quic_pdu(quic, 1, current_time, picoquic_val64_connection_id(ph.dest_cnx_id),
+                    addr_from, addr_to, packet_length);
+            }
         }
         else {
-            picoquic_log_quic_pdu(quic, 1, current_time, picoquic_val64_connection_id(ph.dest_cnx_id),
-                addr_from, addr_to, packet_length);
-        }
-    }
-    else {
-        if (ret == 0 && picoquic_compare_connection_id(previous_dest_id, &ph.dest_cnx_id) != 0) {
-            ret = PICOQUIC_ERROR_CNXID_SEGMENT;
-        }
-        else if (ret == PICOQUIC_ERROR_VERSION_NOT_SUPPORTED) {
-            /* A coalesced packet with unknown version is likely some kind of padding */
-            ret = PICOQUIC_ERROR_CNXID_SEGMENT;
-        }
+            if (ret == 0 && picoquic_compare_connection_id(previous_dest_id, &ph.dest_cnx_id) != 0) {
+                ret = PICOQUIC_ERROR_CNXID_SEGMENT;
+            }
+            else if (ret == PICOQUIC_ERROR_VERSION_NOT_SUPPORTED) {
+                /* A coalesced packet with unknown version is likely some kind of padding */
+                ret = PICOQUIC_ERROR_CNXID_SEGMENT;
+            }
 
-        if (ret == PICOQUIC_ERROR_CNXID_SEGMENT && *first_cnx != cnx && *first_cnx != NULL) {
-            /* Log the drop segment information in the context of the first connection */
-            picoquic_log_dropped_packet(*first_cnx, NULL, &ph, length, ret, bytes, current_time);
+            if (ret == PICOQUIC_ERROR_CNXID_SEGMENT && *first_cnx != cnx && *first_cnx != NULL) {
+                /* Log the drop segment information in the context of the first connection */
+                picoquic_log_dropped_packet(*first_cnx, NULL, &ph, length, ret, bytes, current_time);
+            }
         }
     }
 
     /* Store packet if received in advance of encryption keys */
+    // ENHANCE MC: Make this feature also work for multicast data
     if (ret == PICOQUIC_ERROR_AEAD_NOT_READY &&
         cnx != NULL) {
         is_buffered = picoquic_incoming_not_decrypted(cnx, &ph, current_time, raw_bytes, length, addr_from, addr_to, if_index_to, received_ecn);
@@ -2450,7 +2819,7 @@ int picoquic_incoming_segment(
         }
     }
 
-    if (ret == PICOQUIC_ERROR_VERSION_NOT_SUPPORTED) {
+    if (mc_ch_in_cnx == NULL && ret == PICOQUIC_ERROR_VERSION_NOT_SUPPORTED) {
         /* use the result of parsing to consider version negotiation,
         * but block reflection attacks towards protected ports. */
         if (packet_length >= PICOQUIC_ENFORCED_INITIAL_MTU){
@@ -2458,14 +2827,14 @@ int picoquic_incoming_segment(
                 picoquic_prepare_version_negotiation(quic, addr_from, addr_to, if_index_to, &ph, raw_bytes);
             }
         }
-    } else if (ret == PICOQUIC_ERROR_RETRY_NEEDED) {
+    } else if (mc_ch_in_cnx == NULL && ret == PICOQUIC_ERROR_RETRY_NEEDED) {
         /* Incoming packet could not be processed, need to send a Retry. */
         if (packet_length >= PICOQUIC_ENFORCED_INITIAL_MTU){
             if (quic->is_port_blocking_disabled || !picoquic_check_addr_blocked(addr_from)) {
                 picoquic_queue_retry_packet(quic, addr_from, addr_to, if_index_to, &ph, current_time);
             }
         }
-    } else if (ret == PICOQUIC_ERROR_SERVER_BUSY) {
+    } else if (mc_ch_in_cnx == NULL && ret == PICOQUIC_ERROR_SERVER_BUSY) {
         /* Incoming packet could not be processed, need to send a Retry. */
         if (packet_length >= PICOQUIC_ENFORCED_INITIAL_MTU){
             if (quic->is_port_blocking_disabled || !picoquic_check_addr_blocked(addr_from)) {
@@ -2473,7 +2842,7 @@ int picoquic_incoming_segment(
             }
         }
     } else if (ret == 0) {
-        if (cnx == NULL) {
+        if (cnx == NULL && mc_ch_in_cnx == NULL) {
             /* Unexpected packet. Reject, drop and log. */
             if (!picoquic_is_connection_id_null(&ph.dest_cnx_id) &&
                 (quic->is_port_blocking_disabled || !picoquic_check_addr_blocked(addr_from))) {
@@ -2481,7 +2850,7 @@ int picoquic_incoming_segment(
             }
             ret = PICOQUIC_ERROR_DETECTED;
         }
-        else {
+        else if (cnx != NULL) {
             cnx->quic_bit_received_0 |= ph.quic_bit_is_zero;
             switch (ph.ptype) {
             case picoquic_packet_version_negotiation:
@@ -2578,13 +2947,27 @@ int picoquic_incoming_segment(
                 ret = PICOQUIC_ERROR_DETECTED;
                 break;
             }
+        } 
+        else if (mc_ch_in_cnx != NULL) {
+            // Only 1rtt packets allowed in multicast channels
+            if (phm.ptype != picoquic_packet_1rtt_protected) {
+                /* Packet type error. Log and ignore */
+                DBG_PRINTF("Unexpected packet type (%d), type: %d, epoch: %d, pn: %d\n",
+                    cnx->client_mode, phm.ptype, picoquic_epoch_1rtt, (int) phm.pn);
+                ret = PICOQUIC_ERROR_DETECTED;
+            }
+
+            if (ret == 0) {
+                ret = picoquic_incoming_1rtt_multicast(mc_ch_in_cnx, bytes, decrypted_data,
+                    &phm, addr_from, addr_to, if_index_to, current_time);
+            }
         }
-    } else if (ret == PICOQUIC_ERROR_STATELESS_RESET) {
+    } else if (ret == PICOQUIC_ERROR_STATELESS_RESET && mc_ch_in_cnx == NULL) {
         ret = picoquic_incoming_stateless_reset(cnx);
     }
     else if (ret == PICOQUIC_ERROR_AEAD_CHECK &&
         ph.ptype == picoquic_packet_handshake &&
-        cnx != NULL &&
+        cnx != NULL && mc_ch_in_cnx == NULL &&
         (cnx->cnx_state == picoquic_state_client_init_sent || cnx->cnx_state == picoquic_state_client_init_resent))
     {
         /* Indicates that the server probably sent initial and handshake but initial was lost */
@@ -2597,7 +2980,7 @@ int picoquic_incoming_segment(
     }
 
     if (ret == 0) {
-        if (cnx != NULL && cnx->cnx_state != picoquic_state_disconnected &&
+        if (cnx != NULL && mc_ch_in_cnx == NULL && cnx->cnx_state != picoquic_state_disconnected &&
             ph.ptype != picoquic_packet_version_negotiation) {
             cnx->nb_packets_received++;
             // TODO MC: Make sure that this is reached in multicast setting, to avoid idle timeout
@@ -2606,6 +2989,9 @@ int picoquic_incoming_segment(
             ret = picoquic_record_pn_received(cnx, ph.pc, ph.l_cid, ph.pn64, receive_time);
             /* Perform ECN accounting */
             picoquic_ecn_accounting(cnx, received_ecn, ph.pc, ph.l_cid);
+        } else if (mc_ch_in_cnx != NULL) {
+            mc_ch_in_cnx->nb_packets_received++;
+            mc_ch_in_cnx->latest_receive_time = current_time;
         }
         if (cnx != NULL) {
             picoquic_reinsert_by_wake_time(cnx->quic, cnx, current_time);

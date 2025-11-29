@@ -135,6 +135,9 @@ typedef struct st_picoquic_packet_loop_param_t {
     int prefer_extra_socket;
     int simulate_eio;
     size_t send_length_max;
+    // Only used with picoquic_packet_loop_multicast_send. If set, only send data for this channel in loop
+    picoquic_multicast_channel_t* multicast_channel;
+    int force_localhost_src_ip; // only used for multicast
 } picoquic_packet_loop_param_t;
 
 int picoquic_packet_loop_v2(picoquic_quic_t* quic,
@@ -259,6 +262,12 @@ void picoquic_delete_network_thread(picoquic_network_thread_ctx_t* thread_ctx);
 * thread is created, using the thread handle in thread_ctx->pthread.
 */
 
+picoquic_network_thread_ctx_t* picoquic_start_custom_network_thread_ex(picoquic_quic_t* quic, picoquic_packet_loop_param_t* param,
+    picoquic_custom_thread_create_fn thread_create_fn, picoquic_custom_thread_delete_fn thread_delete_fn,
+    picoquic_custom_thread_setname_fn thread_setname_fn, char const* thread_name,
+    void*(packet_loop_fn)(void* v_ctx),
+    picoquic_packet_loop_cb_fn loop_callback, void* loop_callback_ctx, int* ret);
+
 picoquic_network_thread_ctx_t* picoquic_start_custom_network_thread(
     picoquic_quic_t* quic,
     picoquic_packet_loop_param_t* param,
@@ -294,6 +303,8 @@ int picoquic_packet_loop(picoquic_quic_t* quic,
     int do_not_use_gso,
     picoquic_packet_loop_cb_fn loop_callback,
     void * loop_callback_ctx);
+
+void* picoquic_packet_loop_multicast_send(void* v_ctx);
 
 #ifdef _WINDOWS
 int picoquic_packet_loop_win(picoquic_quic_t* quic,
