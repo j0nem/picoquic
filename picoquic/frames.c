@@ -5533,7 +5533,8 @@ uint8_t* picoquic_format_ready_datagram_frame_multicast(picoquic_multicast_chann
         else {
             bytes = datagram_data_context.after_data;
 
-            if (datagram_data_context.is_old_api || !datagram_data_context.was_called) {
+            // INFO MC: Always use the extended API
+            if (!datagram_data_context.was_called) {
                 *more_data |= channel->is_datagram_ready;
             }
             else {

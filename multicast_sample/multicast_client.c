@@ -228,6 +228,31 @@ static void multicast_client_free_context(multicast_client_ctx_t *client_ctx)
     }
 }
 
+/* Return 1 if bytes array has datagram prefix */
+int multicast_client_has_datagram_prefix(uint8_t* bytes) {
+    fprintf(stdout, "DEBUG: First three bytes: 0x%x, 0x%x, 0x%x\n", bytes[0], bytes[1], bytes[2]);
+    if (bytes[0] == multicast_datagram_prefix[0] && 
+    bytes[1] == multicast_datagram_prefix[1] &&
+    bytes[2] == multicast_datagram_prefix[2]) {
+        return 1;
+    }
+
+    return 0;
+}
+
+/* Return 1 if bytes array has datagram suffix */
+int multicast_client_has_datagram_suffix(uint8_t* bytes, size_t length) {
+    fprintf(stdout, "DEBUG: Last three bytes: 0x%x, 0x%x, 0x%x\n", bytes[length - 3], bytes[length - 2], bytes[length - 1]);
+
+    if (bytes[length - 3] == multicast_datagram_suffix[0] && 
+    bytes[length - 2] == multicast_datagram_suffix[1] &&
+    bytes[length - 2] == multicast_datagram_suffix[2]) {
+        return 1;
+    }
+
+    return 0;
+}
+
 int multicast_client_callback_multicast(picoquic_multicast_channel_t* channel, 
     uint64_t stream_id, uint8_t *bytes, size_t length, 
     picoquic_call_back_event_t fin_or_event, void *callback_ctx, void *v_stream_ctx
@@ -250,13 +275,24 @@ int multicast_client_callback_multicast(picoquic_multicast_channel_t* channel,
             case picoquic_callback_multicast_datagram:
                 fprintf(stdout, "CALLBACK picoquic_callback_multicast_datagram called!\n");
                 /* Data arrival on datagram */
-                if (client_ctx->F == NULL)
+                
+                int skip_bytes_start = 0;
+                int skip_bytes_end = 0;
+                int is_final_datagram = 0; // close file and mark as finished when file suffix detected
+
+                if (multicast_client_has_datagram_suffix(bytes, length) == 1) {
+                    skip_bytes_end = 3;
+                    is_final_datagram = 1;
+                }
+
+                if (client_ctx->F == NULL && multicast_client_has_datagram_prefix(bytes) == 1)
                 {
                     /* Open the file to receive the data. This is done at the last possible moment,
                     * to minimize the number of files open simultaneously.
                     * When formatting the file_path, verify that the directory name is zero-length,
                     * or terminated by a proper file separator.
                        */
+                    skip_bytes_start = 3;
                     char file_path[1024];
                     size_t dir_len = strlen(client_ctx->default_dir);
                     size_t file_name_len = strlen(PICOQUIC_MULTICAST_CLIENT_DATA_FILENAME);
@@ -295,7 +331,7 @@ int multicast_client_callback_multicast(picoquic_multicast_channel_t* channel,
                 if (ret == 0 && length > 0)
                 {
                     /* write the received bytes to the file */
-                    if (fwrite(bytes, length, 1, client_ctx->F) != 1)
+                    if (fwrite(bytes + skip_bytes_start, length - skip_bytes_start - skip_bytes_end, 1, client_ctx->F) != 1)
                     {
                         /* Could not write file to disk */
                         fprintf(stderr, "app: Could not write data to disk.\n");
@@ -309,8 +345,9 @@ int multicast_client_callback_multicast(picoquic_multicast_channel_t* channel,
                 }
                 
                 // TODO MC: Figure out how to find the end of input for a file
-                if (ret == 0 && fin_or_event == picoquic_callback_multicast_datagram)
+                if (ret == 0 && is_final_datagram == 1)
                 {
+                    fprintf(stdout, "TRANSMISSION COMPLETE, CLOSING FILE\n");
                     client_ctx->F = picoquic_file_close(client_ctx->F);
                     
                     client_ctx->is_stream_finished = 1;
