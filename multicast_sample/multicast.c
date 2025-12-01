@@ -46,6 +46,17 @@
 #include <picosocks.h>
 #include "picoquic_multicast.h"
 
+const uint8_t multicast_datagram_prefix[3] = {
+    PICOQUIC_MULTICAST_DATAGRAM_PREFIX_BYTE1,
+    PICOQUIC_MULTICAST_DATAGRAM_PREFIX_BYTE2,
+    PICOQUIC_MULTICAST_DATAGRAM_PREFIX_BYTE3
+};
+const uint8_t multicast_datagram_suffix[3] = {
+    PICOQUIC_MULTICAST_DATAGRAM_SUFFIX_BYTE1,
+    PICOQUIC_MULTICAST_DATAGRAM_SUFFIX_BYTE2, 
+    PICOQUIC_MULTICAST_DATAGRAM_SUFFIX_BYTE3
+};
+
 static void usage(char const * multicast_name)
 {
     fprintf(stderr, "Usage:\n");
