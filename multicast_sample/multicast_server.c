@@ -460,7 +460,7 @@ int multicast_server_callback(picoquic_cnx_t *cnx,
  * - The loop breaks if the socket return an error.
  */
 
-int picoquic_multicast_server(int server_port, int sender_port, const char *server_cert, const char *server_key, const char *served_file)
+int picoquic_multicast_server(int server_port, int sender_port, const char *server_cert, const char *server_key, int max_rate, const char *served_file)
 {
     // TODO MC: Start background thread mc sender server in this method somewhere
 
@@ -512,7 +512,7 @@ int picoquic_multicast_server(int server_port, int sender_port, const char *serv
         struct sockaddr_storage group_ip;
         picoquic_store_text_addr(&group_ip, PICOQUIC_MULTICAST_GROUP_IP, PICOQUIC_MULTICAST_GROUP_PORT);
 
-        picoquic_create_multicast_channel(quic, &default_context.mc_channel, PICOQUIC_MULTICAST_MAX_CLIENTS, &group_ip, NULL);
+        picoquic_create_multicast_channel(quic, &default_context.mc_channel, PICOQUIC_MULTICAST_MAX_CLIENTS, &group_ip, NULL, max_rate);
     }
 
     /* Wait for packets using the wait loop provided in the library.

@@ -1299,7 +1299,7 @@ typedef struct st_picoquic_multicast_channel_t {
     int nb_aead_secrets;
     picoquic_crypto_context_t crypto_context; 
     uint16_t hash_algorithm;
-    uint64_t max_rate;
+    uint64_t max_rate; // max rate in mbps for this channel
     uint64_t max_ack_delay;
     int is_retired;
 

@@ -275,8 +275,6 @@ int multicast_sender_callback(picoquic_multicast_channel_t* channel,
                 break;
             }
 
-            fprintf(stdout, "debug: send datagram from application\n");
-
             multicast_sender_datagram_ctx_t* datagram_ctx = sender_ctx->first_datagram;
             if (!datagram_ctx->is_file_open) {
                 ret = multicast_sender_open_file(sender_ctx, datagram_ctx);
@@ -286,9 +284,10 @@ int multicast_sender_callback(picoquic_multicast_channel_t* channel,
                 }
             }
 
-            // Use 3-byte prefix and 3-byte suffix to indicate start and end of file to receiver
+            // Use 5-byte prefix and 5-byte suffix to indicate start and end of file to receiver
             int has_prefix = 0;
             int has_suffix = 0;
+            int prefix_suffix_length = PICOQUIC_MULTICAST_DATAGRAM_PREFIX_SUFFIX_LENGTH;
 
             /* Implement the zero copy callback */
             size_t available = datagram_ctx->file_length - datagram_ctx->file_sent;
@@ -297,15 +296,15 @@ int multicast_sender_callback(picoquic_multicast_channel_t* channel,
 
             if (datagram_ctx->file_sent == 0) {
                 has_prefix = 1;
-                available += 3;
+                available += prefix_suffix_length;
             }
             
-            if (available + 3 > length) {
+            if (available + prefix_suffix_length > length) {
                 available = length;
                 more_data = 1;
             } else {
                 has_suffix = 1;
-                available += 3;
+                available += prefix_suffix_length;
             }
 
             buffer = picoquic_provide_datagram_buffer_ex(bytes, available, picoquic_datagram_active_any_path);
@@ -313,19 +312,19 @@ int multicast_sender_callback(picoquic_multicast_channel_t* channel,
                 uint8_t* start_fread = buffer;
 
                 if (has_prefix == 1) {
-                    memcpy(buffer, multicast_datagram_prefix, 3);
-                    start_fread += 3;
-                    available -= 3;
+                    memcpy(buffer, multicast_datagram_prefix, prefix_suffix_length);
+                    start_fread += prefix_suffix_length;
+                    available -= prefix_suffix_length;
                 } 
 
                 size_t bytes_to_be_read = available;
                 if (has_suffix == 1) {
-                    bytes_to_be_read -= 3;
+                    bytes_to_be_read -= prefix_suffix_length;
                 }
 
                 size_t nb_read = fread(start_fread, 1, bytes_to_be_read, datagram_ctx->F);
 
-                if ((nb_read != available && has_suffix == 0) || (nb_read + 3 != available && has_suffix == 1)) {
+                if ((nb_read != available && has_suffix == 0) || (nb_read + prefix_suffix_length != available && has_suffix == 1)) {
                     /* Error while reading the file */
                     ret = -1;           
                 }
@@ -334,8 +333,8 @@ int multicast_sender_callback(picoquic_multicast_channel_t* channel,
                 }
 
                 if (has_suffix == 1) {
-                    memcpy(start_fread + nb_read, multicast_datagram_suffix, 3);
-                    fprintf(stdout, "Last three bytes to be sent: 0x%x, 0x%x, 0x%x\n", buffer[available - 3], buffer[available - 2], buffer[available - 1]);
+                    memcpy(start_fread + nb_read, multicast_datagram_suffix, prefix_suffix_length);
+                    fprintf(stdout, "Last five bytes to be sent: 0x%x, 0x%x, 0x%x, 0x%x, 0x%x\n", buffer[available - 5], buffer[available - 4], buffer[available - 3], buffer[available - 2], buffer[available - 1]);
                 }
             }
             else {
@@ -516,6 +515,9 @@ int picoquic_multicast_sender_start(int server_port,
 
     /* Force 127.0.0.1 as src ip for multicast packets for local tests */
     param.force_localhost_src_ip = 1;
+
+    // CHECK MC: GSO deactivated currently due to issues with local interfaces, may be re-activated later?
+    param.do_not_use_gso = 1;
 
     /* Start the background thread. */
     *thread_ctx = picoquic_start_custom_network_thread_ex(quic, &param,

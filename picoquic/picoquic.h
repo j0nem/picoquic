@@ -742,7 +742,7 @@ void picoquic_set_default_multicast_option(picoquic_quic_t* quic, int multicast_
 int picoquic_set_default_multicast_client_params(picoquic_quic_t* quic, picoquic_tp_multicast_client_params_t* params);
 
 /* Create a new multicast channel within the given QUIC context */
-int picoquic_create_multicast_channel(picoquic_quic_t* quic, picoquic_multicast_channel_t** mc_channel, int max_clients, struct sockaddr_storage* group_ipv4, struct sockaddr_storage* group_ipv6);
+int picoquic_create_multicast_channel(picoquic_quic_t* quic, picoquic_multicast_channel_t** mc_channel, int max_clients, struct sockaddr_storage* group_ipv4, struct sockaddr_storage* group_ipv6, uint64_t max_rate);
 
 /* Prepare MC_ANNOUNCE, MC_KEY and MC_JOIN frame and queue sending to client */
 int picoquic_schedule_mc_announce_and_join(picoquic_cnx_t* cnx, picoquic_multicast_channel_t* channel);
