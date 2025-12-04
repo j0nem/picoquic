@@ -2711,12 +2711,11 @@ int picoquic_incoming_segment(
     uint8_t* bytes = NULL;
     picoquic_stream_data_node_t* decrypted_data = picoquic_stream_data_node_alloc(quic);
     picoquic_mc_channel_in_cnx_t* mc_ch_in_cnx = NULL;
-    picoquic_multicast_channel_t* multicast_channel = NULL;
 
     if (decrypted_data == NULL) {
         return -1;
     }
-
+    
     if (quic->nb_mc_channels > 0) {
         uint16_t port = 0;
         if (addr_to->sa_family == AF_INET) {
@@ -2731,14 +2730,10 @@ int picoquic_incoming_segment(
                 && quic->mc_channels[i]->client_mode && quic->mc_channels[i]->nb_used_in_cnx == 1
             ) {
                 mc_ch_in_cnx = quic->mc_channels[i]->used_in_cnx[0];
-                multicast_channel = mc_ch_in_cnx->channel;
-                fprintf(stdout, "DEBUG: Detected multicast data to port %u, interface %i from channel: ", port, if_index_to);
-                print_hex_bytes(multicast_channel->channel_id.id, multicast_channel->channel_id.id_len);
-                fprintf(stdout, "\n");
             }
         }
     }
-    
+
     /* Parse the header and decrypt the segment */
     if (mc_ch_in_cnx == NULL) {
         ret = picoquic_parse_header_and_decrypt(quic, raw_bytes, length, packet_length, addr_from,

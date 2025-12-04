@@ -46,23 +46,27 @@
 #include <picosocks.h>
 #include "picoquic_multicast.h"
 
-const uint8_t multicast_datagram_prefix[3] = {
+const uint8_t multicast_datagram_prefix[PICOQUIC_MULTICAST_DATAGRAM_PREFIX_SUFFIX_LENGTH] = {
     PICOQUIC_MULTICAST_DATAGRAM_PREFIX_BYTE1,
     PICOQUIC_MULTICAST_DATAGRAM_PREFIX_BYTE2,
-    PICOQUIC_MULTICAST_DATAGRAM_PREFIX_BYTE3
+    PICOQUIC_MULTICAST_DATAGRAM_PREFIX_BYTE3,
+    PICOQUIC_MULTICAST_DATAGRAM_PREFIX_BYTE4,
+    PICOQUIC_MULTICAST_DATAGRAM_PREFIX_BYTE5
 };
-const uint8_t multicast_datagram_suffix[3] = {
+const uint8_t multicast_datagram_suffix[PICOQUIC_MULTICAST_DATAGRAM_PREFIX_SUFFIX_LENGTH] = {
     PICOQUIC_MULTICAST_DATAGRAM_SUFFIX_BYTE1,
     PICOQUIC_MULTICAST_DATAGRAM_SUFFIX_BYTE2, 
-    PICOQUIC_MULTICAST_DATAGRAM_SUFFIX_BYTE3
+    PICOQUIC_MULTICAST_DATAGRAM_SUFFIX_BYTE3,
+    PICOQUIC_MULTICAST_DATAGRAM_SUFFIX_BYTE4,
+    PICOQUIC_MULTICAST_DATAGRAM_SUFFIX_BYTE5
 };
 
 static void usage(char const * multicast_name)
 {
     fprintf(stderr, "Usage:\n");
-    fprintf(stderr, "    %s client server_name port folder\n", multicast_name);
+    fprintf(stderr, "    %s client server_name port folder max_rate\n", multicast_name);
     fprintf(stderr, "or :\n");
-    fprintf(stderr, "    %s server port_server port_sender cert_file private_key_file served_file_name\n", multicast_name);
+    fprintf(stderr, "    %s server port_server port_sender cert_file private_key_file max_rate served_file_name\n", multicast_name);
     exit(1);
 }
 
@@ -85,23 +89,26 @@ int main(int argc, char** argv)
         usage(argv[0]);
     }
     else if (strcmp(argv[1], "client") == 0) {
-        if (argc < 5) {
+        if (argc < 6) {
             usage(argv[0]);
         }
         else {
             int server_port = get_port(argv[0], argv[3]);
-            exit_code = picoquic_multicast_client(argv[2], server_port, argv[4]);
+            int max_rate = atoi(argv[5]);
+            exit_code = picoquic_multicast_client(argv[2], server_port, argv[4], max_rate);
         }
     }
     else if (strcmp(argv[1], "server") == 0) {
-        if (argc != 7) {
+        if (argc != 8) {
             usage(argv[0]);
         }
         else {
             int server_port = get_port(argv[0], argv[2]);
             int sender_port = get_port(argv[0], argv[3]);
 
-            exit_code = picoquic_multicast_server(server_port, sender_port, argv[4], argv[5], argv[6]);
+            int max_rate = atoi(argv[6]);
+
+            exit_code = picoquic_multicast_server(server_port, sender_port, argv[4], argv[5], max_rate, argv[7]);
         }
     }
     else

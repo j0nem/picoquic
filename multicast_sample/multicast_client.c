@@ -113,6 +113,7 @@ typedef struct st_multicast_client_ctx_t
     uint16_t second_path_unique_id;
     uint16_t local_port;
     uint16_t alt_port;
+    picoquic_tp_multicast_client_params_t* tp_params;
 
     FILE *F;
     size_t bytes_received;
@@ -226,31 +227,37 @@ static void multicast_client_free_context(multicast_client_ctx_t *client_ctx)
     if (client_ctx->F != NULL) {
         (void)picoquic_file_close(client_ctx->F);
     }
+    if (client_ctx->tp_params != NULL) {
+        free(client_ctx->tp_params);
+    }
 }
 
 /* Return 1 if bytes array has datagram prefix */
-int multicast_client_has_datagram_prefix(uint8_t* bytes) {
-    fprintf(stdout, "DEBUG: First three bytes: 0x%x, 0x%x, 0x%x\n", bytes[0], bytes[1], bytes[2]);
-    if (bytes[0] == multicast_datagram_prefix[0] && 
-    bytes[1] == multicast_datagram_prefix[1] &&
-    bytes[2] == multicast_datagram_prefix[2]) {
-        return 1;
+int multicast_client_has_datagram_prefix(uint8_t* bytes, int prefix_length) {
+    fprintf(stdout, "DEBUG: First five bytes: 0x%x, 0x%x, 0x%x, 0x%x, 0x%x\n", bytes[0], bytes[1], bytes[2], bytes[3], bytes[4]);
+
+    for (int i = 0; i < prefix_length; i++) {
+        if (bytes[i] != multicast_datagram_prefix[i]) {
+            return 0;
+        }
     }
 
-    return 0;
+    return 1;
 }
 
 /* Return 1 if bytes array has datagram suffix */
-int multicast_client_has_datagram_suffix(uint8_t* bytes, size_t length) {
-    fprintf(stdout, "DEBUG: Last three bytes: 0x%x, 0x%x, 0x%x\n", bytes[length - 3], bytes[length - 2], bytes[length - 1]);
+int multicast_client_has_datagram_suffix(uint8_t* bytes, size_t length, int suffix_length) {
+    fprintf(stdout, "DEBUG: Last five bytes: 0x%x, 0x%x, 0x%x, 0x%x, 0x%x\n", bytes[length - 5], bytes[length - 4], bytes[length - 3], bytes[length - 2], bytes[length - 1]);
 
-    if (bytes[length - 3] == multicast_datagram_suffix[0] && 
-    bytes[length - 2] == multicast_datagram_suffix[1] &&
-    bytes[length - 2] == multicast_datagram_suffix[2]) {
-        return 1;
+    int bytepos = suffix_length;
+    for (int i = 0; i < suffix_length; i++) {
+        if (bytes[length - bytepos] != multicast_datagram_suffix[i]) {
+            return 0;
+        }
+        bytepos--;
     }
 
-    return 0;
+    return 1;
 }
 
 int multicast_client_callback_multicast(picoquic_multicast_channel_t* channel, 
@@ -279,20 +286,21 @@ int multicast_client_callback_multicast(picoquic_multicast_channel_t* channel,
                 int skip_bytes_start = 0;
                 int skip_bytes_end = 0;
                 int is_final_datagram = 0; // close file and mark as finished when file suffix detected
+                int prefix_suffix_length = PICOQUIC_MULTICAST_DATAGRAM_PREFIX_SUFFIX_LENGTH;
 
-                if (multicast_client_has_datagram_suffix(bytes, length) == 1) {
-                    skip_bytes_end = 3;
+                if (multicast_client_has_datagram_suffix(bytes, length, prefix_suffix_length) == 1) {
+                    skip_bytes_end = prefix_suffix_length;
                     is_final_datagram = 1;
                 }
 
-                if (client_ctx->F == NULL && multicast_client_has_datagram_prefix(bytes) == 1)
+                if (client_ctx->F == NULL && multicast_client_has_datagram_prefix(bytes, prefix_suffix_length) == 1)
                 {
                     /* Open the file to receive the data. This is done at the last possible moment,
                     * to minimize the number of files open simultaneously.
                     * When formatting the file_path, verify that the directory name is zero-length,
                     * or terminated by a proper file separator.
                        */
-                    skip_bytes_start = 3;
+                    skip_bytes_start = prefix_suffix_length;
                     char file_path[1024];
                     size_t dir_len = strlen(client_ctx->default_dir);
                     size_t file_name_len = strlen(PICOQUIC_MULTICAST_CLIENT_DATA_FILENAME);
@@ -544,7 +552,7 @@ static int multicast_client_loop_cb(picoquic_quic_t *quic, picoquic_packet_loop_
  * - Find the server's address
  * - Initialize the client context and create a client connection.
  */
-static int multicast_client_init(char const *server_name, int server_port, char const *default_dir,
+static int multicast_client_init(char const *server_name, int server_port, char const *default_dir, int max_rate,
                                  char const *ticket_store_filename, char const *token_store_filename,
                                  struct sockaddr_storage *server_address, picoquic_quic_t **quic, picoquic_cnx_t **cnx, multicast_client_ctx_t *client_ctx)
 {
@@ -605,9 +613,12 @@ static int multicast_client_init(char const *server_name, int server_port, char 
             picoquic_set_log_level(*quic, 1);
             picoquic_enable_path_callbacks_default(*quic, 1);
 
-            // Always enable multicast
+            // Multicast settings
+            client_ctx->tp_params = malloc(sizeof(picoquic_tp_multicast_client_params_t));
+            client_ctx->tp_params->max_aggregate_rate = (uint64_t)max_rate;
+
             picoquic_set_default_multicast_option(*quic, 1);
-            picoquic_set_default_multicast_client_params(*quic, NULL);
+            picoquic_set_default_multicast_client_params(*quic, client_ctx->tp_params);
             printf("init: Accept multicast: %s.\n", ((*quic)->default_multicast_option) ? "Yes" : "No");
         }
     }
@@ -676,7 +687,7 @@ static int multicast_client_init(char const *server_name, int server_port, char 
  * - The loop breaks if the client connection is finished.
  */
 
-int picoquic_multicast_client(char const *server_name, int server_port, char const *default_dir)
+int picoquic_multicast_client(char const *server_name, int server_port, char const *default_dir, int max_rate)
 {
     int ret = 0;
     struct sockaddr_storage server_address;
@@ -687,7 +698,7 @@ int picoquic_multicast_client(char const *server_name, int server_port, char con
     char const *ticket_store_filename = PICOQUIC_MULTICAST_CLIENT_TICKET_STORE;
     char const *token_store_filename = PICOQUIC_MULTICAST_CLIENT_TOKEN_STORE;
 
-    ret = multicast_client_init(server_name, server_port, default_dir, 
+    ret = multicast_client_init(server_name, server_port, default_dir, max_rate,
                                 ticket_store_filename, token_store_filename,
                                 &server_address, &quic, &cnx, &client_ctx);
 

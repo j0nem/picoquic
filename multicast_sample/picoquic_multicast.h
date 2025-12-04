@@ -47,17 +47,23 @@ extern "C"
 #define PICOQUIC_MULTICAST_FILE_READ_ERROR 0x104
 #define PICOQUIC_MULTICAST_FILE_CANCEL_ERROR 0x105
 
-#define PICOQUIC_MULTICAST_DATAGRAM_PREFIX_BYTE1 0x01
-#define PICOQUIC_MULTICAST_DATAGRAM_PREFIX_BYTE2 0x02
-#define PICOQUIC_MULTICAST_DATAGRAM_PREFIX_BYTE3 0x03
-extern const uint8_t multicast_datagram_prefix[3];
+#define PICOQUIC_MULTICAST_DATAGRAM_PREFIX_SUFFIX_LENGTH 5
 
-#define PICOQUIC_MULTICAST_DATAGRAM_SUFFIX_BYTE1 0xFF
-#define PICOQUIC_MULTICAST_DATAGRAM_SUFFIX_BYTE2 0xFF
-#define PICOQUIC_MULTICAST_DATAGRAM_SUFFIX_BYTE3 0xFF
-extern const uint8_t multicast_datagram_suffix[3];
+#define PICOQUIC_MULTICAST_DATAGRAM_PREFIX_BYTE1 0x00
+#define PICOQUIC_MULTICAST_DATAGRAM_PREFIX_BYTE2 0x01
+#define PICOQUIC_MULTICAST_DATAGRAM_PREFIX_BYTE3 0x02
+#define PICOQUIC_MULTICAST_DATAGRAM_PREFIX_BYTE4 0x03
+#define PICOQUIC_MULTICAST_DATAGRAM_PREFIX_BYTE5 0x04
+extern const uint8_t multicast_datagram_prefix[PICOQUIC_MULTICAST_DATAGRAM_PREFIX_SUFFIX_LENGTH];
 
-#define PICOQUIC_MULTICAST_CLIENT_DATA_FILENAME "output.txt"
+#define PICOQUIC_MULTICAST_DATAGRAM_SUFFIX_BYTE1 0x04
+#define PICOQUIC_MULTICAST_DATAGRAM_SUFFIX_BYTE2 0x03
+#define PICOQUIC_MULTICAST_DATAGRAM_SUFFIX_BYTE3 0x02
+#define PICOQUIC_MULTICAST_DATAGRAM_SUFFIX_BYTE4 0x01
+#define PICOQUIC_MULTICAST_DATAGRAM_SUFFIX_BYTE5 0x00
+extern const uint8_t multicast_datagram_suffix[PICOQUIC_MULTICAST_DATAGRAM_PREFIX_SUFFIX_LENGTH];
+
+#define PICOQUIC_MULTICAST_CLIENT_DATA_FILENAME "output"
 #define PICOQUIC_MULTICAST_CLIENT_TICKET_STORE "multicast_ticket_store.bin"
 #define PICOQUIC_MULTICAST_CLIENT_TOKEN_STORE "multicast_token_store.bin"
 #define PICOQUIC_MULTICAST_CLIENT_QLOG_DIR "./log"
@@ -86,7 +92,7 @@ typedef struct st_multicast_sender_ctx_t {
     int is_disconnected;
 } multicast_sender_ctx_t;
 
-int picoquic_multicast_client(char const *server_name, int server_port, char const *default_dir);
+int picoquic_multicast_client(char const *server_name, int server_port, char const *default_dir, int max_rate);
 
 int picoquic_multicast_sender_start(int server_port, 
     const char* server_cert, const char* server_key,
@@ -96,7 +102,7 @@ int picoquic_multicast_sender_start(int server_port,
     
 void picoquic_multicast_sender_stop(picoquic_network_thread_ctx_t* thread_ctx, multicast_sender_ctx_t* sender_ctx);
 
-int picoquic_multicast_server(int server_port, int sender_port, const char *server_cert, const char *server_key, const char *served_file);
+int picoquic_multicast_server(int server_port, int sender_port, const char *server_cert, const char *server_key, int max_rate, const char *served_file);
 
 #ifdef __cplusplus
 }

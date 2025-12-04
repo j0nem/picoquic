@@ -864,21 +864,22 @@ int picoquic_set_default_multicast_client_params(picoquic_quic_t* quic,
     picoquic_tp_multicast_client_params_t* params)
 {
     if (params == NULL) {
-        if ((params = malloc(sizeof(*params))) == NULL) {
-            fprintf(stderr, "init: Could not alloc multicast_client_params");
-            return -1;
-        }
+        return -1;
+    }
 
-        // CHECK MC: Review these default settings and make them configurable
-        params->ipv4_channels_allowed = 1;
-        params->ipv6_channels_allowed = 0;
-        params->max_aggregate_rate = (uint8_t) 20; // 20 kbits
-        params->max_channel_ids = (uint8_t) 2;
+    // CHECK MC: Review these default settings
+    params->ipv4_channels_allowed = params->ipv4_channels_allowed ? params->ipv4_channels_allowed : 1;
+    params->ipv6_channels_allowed = params->ipv6_channels_allowed ? params->ipv6_channels_allowed : 0;
+    params->max_aggregate_rate = params->max_aggregate_rate ? params->max_aggregate_rate : (uint64_t) 30720; // 30720 kibps = 30 mibps
+    params->max_channel_ids = params->max_channel_ids ? params->max_channel_ids : (uint64_t) 2;
 
+    if (!params->hash_algorithms_supported) {
         params->hash_algorithms_supported = (uint8_t) 2;
         params->hash_algorithms_list[0] = (uint16_t) PICOQUIC_SHA384;
         params->hash_algorithms_list[1] = (uint16_t) PICOQUIC_SHA256;
+    }
 
+    if (!params->encryption_algorithms_supported) {
         params->encryption_algorithms_supported = 2;
         params->encryption_algorithms_list[0] = (uint16_t) PICOQUIC_AES_256_GCM_SHA384;
         params->encryption_algorithms_list[1] = (uint16_t) PICOQUIC_AES_128_GCM_SHA256;
@@ -931,7 +932,7 @@ picoquic_multicast_channel_t* picoquic_find_multicast_channel_global(picoquic_mu
 }
 
 int picoquic_create_multicast_channel(picoquic_quic_t* quic, picoquic_multicast_channel_t** mc_channel, int max_clients, 
-    struct sockaddr_storage* group_ipv4, struct sockaddr_storage* group_ipv6) 
+    struct sockaddr_storage* group_ipv4, struct sockaddr_storage* group_ipv6, uint64_t max_rate) 
 {
     if (quic == NULL || max_clients <= 0 || (group_ipv4 == NULL && group_ipv6 == NULL)) {
         fprintf(stderr, "could not create multicast channel: invalid parameters\n");
@@ -976,7 +977,7 @@ int picoquic_create_multicast_channel(picoquic_quic_t* quic, picoquic_multicast_
     new_channel->header_protection_algorithm = PICOQUIC_AES_256_GCM_SHA384;
     new_channel->aead_algorithm = PICOQUIC_AES_256_GCM_SHA384;
     new_channel->hash_algorithm = PICOQUIC_SHA384;
-    new_channel->max_rate = 20;
+    new_channel->max_rate = max_rate;
     new_channel->max_ack_delay = PICOQUIC_ACK_DELAY_MAX;
     new_channel->quic = quic;
     new_channel->send_mtu = PICOQUIC_INITIAL_MTU_IPV4; // change when ipv6 is supported
