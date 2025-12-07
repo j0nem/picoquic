@@ -234,21 +234,18 @@ static void multicast_client_free_context(multicast_client_ctx_t *client_ctx)
 
 /* Return 1 if bytes array has datagram prefix */
 int multicast_client_has_datagram_prefix(uint8_t* bytes, int prefix_length) {
-    fprintf(stdout, "DEBUG: First five bytes: 0x%x, 0x%x, 0x%x, 0x%x, 0x%x\n", bytes[0], bytes[1], bytes[2], bytes[3], bytes[4]);
-
     for (int i = 0; i < prefix_length; i++) {
         if (bytes[i] != multicast_datagram_prefix[i]) {
             return 0;
         }
     }
 
+    fprintf(stdout, "DEBUG: First five bytes: 0x%x, 0x%x, 0x%x, 0x%x, 0x%x\n", bytes[0], bytes[1], bytes[2], bytes[3], bytes[4]);
     return 1;
 }
 
 /* Return 1 if bytes array has datagram suffix */
 int multicast_client_has_datagram_suffix(uint8_t* bytes, size_t length, int suffix_length) {
-    fprintf(stdout, "DEBUG: Last five bytes: 0x%x, 0x%x, 0x%x, 0x%x, 0x%x\n", bytes[length - 5], bytes[length - 4], bytes[length - 3], bytes[length - 2], bytes[length - 1]);
-
     int bytepos = suffix_length;
     for (int i = 0; i < suffix_length; i++) {
         if (bytes[length - bytepos] != multicast_datagram_suffix[i]) {
@@ -257,6 +254,7 @@ int multicast_client_has_datagram_suffix(uint8_t* bytes, size_t length, int suff
         bytepos--;
     }
 
+    fprintf(stdout, "DEBUG: Last five bytes: 0x%x, 0x%x, 0x%x, 0x%x, 0x%x\n", bytes[length - 5], bytes[length - 4], bytes[length - 3], bytes[length - 2], bytes[length - 1]);
     return 1;
 }
 
@@ -280,7 +278,7 @@ int multicast_client_callback_multicast(picoquic_multicast_channel_t* channel,
         switch (fin_or_event)
         {
             case picoquic_callback_multicast_datagram:
-                fprintf(stdout, "CALLBACK picoquic_callback_multicast_datagram called!\n");
+                fprintf(stdout, "GOT multicast datagram in application\n");
                 /* Data arrival on datagram */
                 
                 int skip_bytes_start = 0;
@@ -347,7 +345,6 @@ int multicast_client_callback_multicast(picoquic_multicast_channel_t* channel,
                     }
                     else
                     {
-                        fprintf(stdout, "WRITTEN DAT TO FILE: %s\n", PICOQUIC_MULTICAST_CLIENT_DATA_FILENAME);
                         client_ctx->bytes_received += length;
                     }
                 }
@@ -615,6 +612,7 @@ static int multicast_client_init(char const *server_name, int server_port, char 
 
             // Multicast settings
             client_ctx->tp_params = malloc(sizeof(picoquic_tp_multicast_client_params_t));
+            memset(client_ctx->tp_params, 0, sizeof(picoquic_tp_multicast_client_params_t));
             client_ctx->tp_params->max_aggregate_rate = (uint64_t)max_rate;
 
             picoquic_set_default_multicast_option(*quic, 1);
