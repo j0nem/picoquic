@@ -977,6 +977,7 @@ int picoquic_create_multicast_channel(picoquic_quic_t* quic, picoquic_multicast_
     new_channel->header_protection_algorithm = PICOQUIC_AES_256_GCM_SHA384;
     new_channel->aead_algorithm = PICOQUIC_AES_256_GCM_SHA384;
     new_channel->hash_algorithm = PICOQUIC_SHA384;
+    strcpy(new_channel->hash_algorithm_name, "sha384");
     new_channel->max_rate = max_rate;
     new_channel->max_ack_delay = PICOQUIC_ACK_DELAY_MAX;
     new_channel->quic = quic;
