@@ -1287,13 +1287,22 @@ typedef struct st_picoquic_crypto_context_t {
 
 typedef struct st_picoquic_mc_channel_in_cnx_t picoquic_mc_channel_in_cnx_t;
 
+// Represents the integrity hash for one multicast packet
 typedef struct st_picoquic_multicast_packet_integrity_t {
     uint64_t packet_number;
     uint8_t* hash;
-    int is_active; // indicator if writing data for this element is finished and it can be used (for concurrency reasons)
+    int is_active;  // indicator if writing data for this element is finished and it can be used (for concurrency reasons)
     struct picoquic_multicast_packet_integrity_t* next;
     struct picoquic_multicast_packet_integrity_t* prev;
 } picoquic_multicast_packet_integrity_t;
+
+// Represents the ACK for one MC_INTEGRITY frame
+typedef struct st_picoquic_multicast_integrity_ack_t {
+    uint64_t packet_number_start;
+    uint64_t nb_hashes;
+    struct picoquic_multicast_integrity_ack_t* next;
+    struct picoquic_multicast_integrity_ack_t* prev;
+} picoquic_multicast_integrity_ack_t;
 
 typedef struct st_picoquic_multicast_channel_t {
     picoquic_quic_t* quic;
@@ -1423,11 +1432,12 @@ typedef struct st_picoquic_mc_channel_in_cnx_t { // ENHANCE MC: Maybe add pointe
     int mc_join_acked;
     int mc_leave_acked;
     int mc_retire_acked;
-    int key_acked;                          // At least one MC_KEY frame was acked
+    int key_acked;                                              // At least one MC_KEY frame was acked
     uint64_t latest_key_sequence_acked;
-    int first_mc_integrity_sent;            // sent at least one mc_integrity frame (needed bc the first packet no is 0)
-    uint64_t mc_integrity_latest_pn_sent;   // latest *multicast* packet number for which an integrity hash was sent
-    uint64_t mc_integrity_latest_pn_acked;  // latest *multicast* packet number for which an integrity hash was acked
+    int first_mc_integrity_sent;                                // sent at least one mc_integrity frame (needed bc the first packet no is 0)
+    uint64_t mc_integrity_latest_pn_sent;                       // latest *multicast* packet number for which an integrity hash was sent
+    picoquic_multicast_integrity_ack_t** integrity_frames_acked; // stores info, which MC_INTEGRITY frames were ACKed by client
+    size_t nb_integrity_frames_acked;
 
     // the following is used on client only:
     uint64_t nb_packets_received;
@@ -2288,6 +2298,8 @@ const uint8_t* picoquic_skip_mc_state_frame(const uint8_t* bytes,
     const uint8_t* bytes_max, uint64_t ftype);
 uint8_t* picoquic_format_mc_integrity_frame(uint8_t* bytes, 
     uint8_t* bytes_max, picoquic_mc_channel_in_cnx_t* ch_in_cnx, int * more_data);
+const uint8_t* picoquic_skip_mc_integrity_frame(const uint8_t* bytes, 
+    const uint8_t* bytes_max, uint64_t ftype);
 
 int picoquic_skip_frame(const uint8_t* bytes, size_t bytes_max, size_t* consumed, int* pure_ack);
 const uint8_t* picoquic_skip_path_abandon_frame(const uint8_t* bytes, const uint8_t* bytes_max);
