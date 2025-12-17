@@ -530,6 +530,50 @@ void picoquic_recycle_packet(picoquic_quic_t * quic, picoquic_packet_t* packet)
     }
 }
 
+picoquic_packet_t* picoquic_create_packet_multicast(picoquic_multicast_channel_t * channel)
+{
+    picoquic_packet_t* packet = channel->p_first_packet;
+    
+    if (packet == NULL) {
+        packet = (picoquic_packet_t*)malloc(sizeof(picoquic_packet_t));
+        if (packet != NULL) {
+            channel->nb_packets_allocated++;
+            if (channel->nb_packets_allocated > channel->nb_packets_allocated_max) {
+                channel->nb_packets_allocated_max = channel->nb_packets_allocated;
+            }
+        }
+    }
+    else {
+        channel->p_first_packet = packet->packet_previous;
+        channel->nb_packets_in_pool--;
+    }
+
+    if (packet != NULL) {
+        /* It might be sufficient to zero the metadata, but zeroing everything
+         * appears safer, and does not confuse checkers like valgrind.
+         */
+        memset(packet, 0, sizeof(picoquic_packet_t));
+    }
+
+    return packet;
+}
+
+void picoquic_recycle_packet_multicast(picoquic_multicast_channel_t * channel, picoquic_packet_t* packet)
+{
+    if (packet != NULL) {
+        if (channel->nb_packets_in_pool >= PICOQUIC_MAX_PACKETS_IN_POOL) {
+            free(packet);
+            channel->nb_packets_allocated--;
+        }
+        else {
+            memset(packet, 0, offsetof(struct st_picoquic_packet_t, bytes));
+            packet->packet_previous = channel->p_first_packet;
+            channel->p_first_packet = packet;
+            channel->nb_packets_in_pool++;
+        }
+    }
+}
+
 void picoquic_update_payload_length(
     uint8_t* bytes, size_t pnum_index, size_t header_length, size_t packet_length)
 {
@@ -4348,6 +4392,7 @@ int picoquic_prepare_packet_ready(picoquic_cnx_t* cnx, picoquic_path_t* path_x, 
 }
 
 /* Create packet hash for multicast MC_INTEGRITY frames */
+// ENHANCE MC: Also remove integrity hashes from context at some point (when all clients received them), memory has limits
 int picoquic_generate_packet_hash_multicast(picoquic_multicast_channel_t* channel, 
     picoquic_packet_t* packet, uint8_t* send_buffer, size_t send_length) 
 {
@@ -4463,6 +4508,7 @@ int picoquic_prepare_segment_multicast(picoquic_multicast_channel_t* channel,
 
     if (*send_length > 0) {
         picoquic_generate_packet_hash_multicast(channel, packet, send_buffer, *send_length);
+        // CHECK MC: Wake handling differently in multicast?
         SET_LAST_WAKE(channel->quic, PICOQUIC_SENDER);
     }
     return ret;
@@ -5058,7 +5104,7 @@ int picoquic_prepare_packet_multicast(picoquic_multicast_channel_t* channel,
             size_t available = packet_max;
             size_t segment_length = 0;
 
-            packet = picoquic_create_packet(channel->quic);
+            packet = picoquic_create_packet_multicast(channel);
 
             if (packet == NULL) {
                 ret = PICOQUIC_ERROR_MEMORY;
@@ -5073,14 +5119,15 @@ int picoquic_prepare_packet_multicast(picoquic_multicast_channel_t* channel,
                     packet_size += segment_length;
                     if (packet->length == 0) {
                         /* Nothing more to send */
-                        picoquic_recycle_packet(channel->quic, packet);
+                        // TODO MC: Fix occasionally occuring double frees with recycle_packet
+                        picoquic_recycle_packet_multicast(channel, packet);
                     }
                     else if (segment_length == 0) {
                         DBG_PRINTF("Send bug: segment length = %zu, packet length = %zu\n", segment_length, packet->length);
                     }
                 }
                 else {
-                    picoquic_recycle_packet(channel->quic, packet);
+                    picoquic_recycle_packet_multicast(channel, packet);
                     packet = NULL;
 
                     if (packet_size != 0) {

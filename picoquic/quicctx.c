@@ -931,6 +931,46 @@ picoquic_multicast_channel_t* picoquic_find_multicast_channel_global(picoquic_mu
     return NULL;
 }
 
+// Find out if served channels have active joined multicast receivers that need `MC_INTEGRITY` frames
+// If yes, set delta_t lower for more frequent checking
+// If `MC_INTEGRITY` sending is at least some frames behind (defined by threshold), wake the cnx and set delta_t to zero
+int picoquic_need_to_send_multicast_integrity(picoquic_quic_t* quic, uint64_t threshold, uint64_t current_time, int64_t* delta_t) {
+    if (quic->nb_mc_channels == 0) {
+        return 0;
+    }
+
+    int64_t active_max_delta_t = 300000;
+
+    for (int i = 0; i < quic->nb_mc_channels; i++) {
+        picoquic_multicast_channel_t* channel = quic->mc_channels[i];
+
+        if (channel->client_mode || channel->is_retired || channel->packet_integrity_last == NULL) {
+            continue;
+        }
+
+        if (channel->nb_used_in_cnx > 0) {
+            for (int j = 0; j < channel->nb_used_in_cnx; j++) {
+                picoquic_mc_channel_in_cnx_t* ch_in_cnx = channel->used_in_cnx[j];
+                if (ch_in_cnx->state < picoquic_mc_state_leave_pending) {
+                    // ENHANCE MC: Check if the receivers are really active (sent MC_ACK frames in the recent past)
+                    // -> if not, make delay longer
+                    if (ch_in_cnx->mc_integrity_latest_pn_sent + threshold <= channel->packet_integrity_last->packet_number) {
+                        picoquic_reinsert_by_wake_time(quic, ch_in_cnx->cnx, current_time);
+                        *delta_t = 0;
+                    } else {
+                        if (*delta_t > active_max_delta_t) {
+                            *delta_t = active_max_delta_t;
+                        }
+                    }
+                    return 1;
+                }
+            }
+        }
+    }
+
+    return 0;
+}
+
 int picoquic_create_multicast_channel(picoquic_quic_t* quic, picoquic_multicast_channel_t** mc_channel, int max_clients, 
     struct sockaddr_storage* group_ipv4, struct sockaddr_storage* group_ipv6, uint64_t max_rate) 
 {
@@ -1043,6 +1083,7 @@ picoquic_mc_channel_in_cnx_t* picoquic_add_channel_to_cnx(picoquic_cnx_t* cnx, p
     memset(new_channel_in_cnx, 0, sizeof(picoquic_mc_channel_in_cnx_t));
 
     new_channel_in_cnx->channel = channel;
+    new_channel_in_cnx->cnx = cnx;
     cnx->mc_channels[cnx->nb_mc_channels] = new_channel_in_cnx;
     cnx->nb_mc_channels++;
 

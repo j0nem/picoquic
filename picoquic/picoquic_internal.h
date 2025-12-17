@@ -1322,9 +1322,9 @@ typedef struct st_picoquic_multicast_channel_t {
     int is_retired;
 
     // points to cnx where this channel was added to, may not yet joined or already left/retired
-    picoquic_mc_channel_in_cnx_t** used_in_cnx; 
+    picoquic_mc_channel_in_cnx_t** used_in_cnx;
     // ENHANCE MC: number of cnx where this channel is used, currently a channel can only be used in one cnx in client mode
-    int nb_used_in_cnx;                        
+    int nb_used_in_cnx;
 
     int client_mode;     // 0: sending (server), 1: receiving (client)
     int socket_open;     // bool, if a socket is opened
@@ -1335,7 +1335,12 @@ typedef struct st_picoquic_multicast_channel_t {
     /* Call back function and context */
     picoquic_stream_data_mc_cb_fn callback_fn;
     void* callback_ctx;
-
+    
+    picoquic_packet_t* p_first_packet;
+    int nb_packets_in_pool;
+    int nb_packets_allocated;
+    int nb_packets_allocated_max;
+    
     uint64_t nb_packets_sent;
     size_t max_mtu_sent;
     size_t send_mtu;
@@ -1412,8 +1417,9 @@ typedef enum {
     picoquic_mc_state_error = 99
 } picoquic_mc_state_enum;
 
-typedef struct st_picoquic_mc_channel_in_cnx_t { // ENHANCE MC: Maybe add pointer back to cnx here for convenience?
+typedef struct st_picoquic_mc_channel_in_cnx_t {
     picoquic_multicast_channel_t* channel;
+    picoquic_cnx_t* cnx;
     picoquic_mc_state_enum state;
     int key_available;
     int state_frame_available;
@@ -2278,6 +2284,9 @@ picoquic_mc_channel_in_cnx_t* picoquic_find_multicast_channel_in_cnx(picoquic_mu
     picoquic_cnx_t* cnx);
 picoquic_multicast_channel_t* picoquic_find_multicast_channel_global(picoquic_multicast_channel_id_t * ch_id, 
     picoquic_quic_t* quic);
+int picoquic_need_to_send_multicast_integrity(picoquic_quic_t* quic, 
+    uint64_t threshold, uint64_t current_time, int64_t* delta_t);
+
 picoquic_mc_channel_in_cnx_t* picoquic_add_channel_to_cnx(picoquic_cnx_t* cnx, 
     picoquic_multicast_channel_t* channel);
 uint8_t* picoquic_format_mc_announce_frame(uint8_t* bytes, uint8_t* bytes_max, 

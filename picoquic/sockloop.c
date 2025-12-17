@@ -1094,6 +1094,7 @@ void* picoquic_packet_loop_v3(void* v_ctx)
         uint8_t received_ecn;
         uint8_t* received_buffer;
         uint64_t previous_time;
+        uint64_t mc_integrity_packet_threshold = 5;
 
         if_index_to = 0;
         /* The "loop immediate" condition is set when a packet has been
@@ -1116,6 +1117,13 @@ void* picoquic_packet_loop_v3(void* v_ctx)
                 ret = loop_callback(quic, picoquic_packet_loop_time_check, loop_callback_ctx, &time_check_arg);
                 if (time_check_arg.delta_t < delta_t) {
                     delta_t = time_check_arg.delta_t;
+                }
+            }
+            // CHECK MC: Set delta lower on active multicast receivers, set to zero when MC_INTEGRITY frames have to be sent
+            int64_t multicast_delta_t;
+            if (picoquic_need_to_send_multicast_integrity(quic, mc_integrity_packet_threshold, current_time, &multicast_delta_t)) {
+                if (multicast_delta_t < delta_t) {
+                    delta_t = multicast_delta_t;
                 }
             }
         }
