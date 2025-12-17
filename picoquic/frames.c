@@ -7706,43 +7706,48 @@ int picoquic_check_mc_state_needs_repeat(picoquic_cnx_t* cnx, const uint8_t* byt
 uint8_t* picoquic_format_mc_integrity_frame(uint8_t* bytes, uint8_t* bytes_max, picoquic_mc_channel_in_cnx_t* ch_in_cnx, int * more_data) {
     uint8_t* bytes0 = bytes;
 
-    uint64_t nb_hashes_to_be_sent_max = 0;
+    long int nb_hashes_to_be_sent_max = 0;
     picoquic_multicast_channel_t* channel = ch_in_cnx->channel;
     picoquic_multicast_packet_integrity_t* first_hash_to_be_sent;
-    picoquic_multicast_packet_integrity_t* last_hash_to_be_sent_max;
+    picoquic_multicast_packet_integrity_t* last_hash_to_be_sent_max;    
 
     if (channel->packet_integrity_last == NULL 
         || channel->packet_integrity_first == NULL 
-        || channel->packet_integrity_first->is_active != 1
-        || channel->packet_integrity_last->is_active != 1
-        || (ch_in_cnx->first_mc_integrity_sent == 1 && ch_in_cnx->mc_integrity_latest_pn_sent >= channel->packet_integrity_last->packet_number)) {
+        || channel->packet_integrity_first->is_active != 1) {
         return bytes0;
-    } 
+    }
+
+    // Important: While this method is running, the separate sending thread usually extends the hash list in parellel.
+    // That's why we need to determine the last integrity hash potentially be sent with this method call to the value 
+    // of channel->packet_integrity_last when the following line gets executed.
+    last_hash_to_be_sent_max = channel->packet_integrity_last;
+    while(last_hash_to_be_sent_max->is_active == 0 && last_hash_to_be_sent_max->prev != NULL) {
+        last_hash_to_be_sent_max = (picoquic_multicast_packet_integrity_t*)last_hash_to_be_sent_max->prev;
+    }
+
+    if (ch_in_cnx->first_mc_integrity_sent == 1 && ch_in_cnx->mc_integrity_latest_pn_sent >= last_hash_to_be_sent_max->packet_number) {
+        fprintf(stdout, "latest_integrity_pn_sent >= last_hash->pn --> Waiting or Finished\n");
+        return bytes0;
+    }
 
     // Find first packet hash to be sent
     if (ch_in_cnx->first_mc_integrity_sent == 0) {
         first_hash_to_be_sent = channel->packet_integrity_first;
-        
     } else {
         picoquic_multicast_packet_integrity_t* hash = channel->packet_integrity_first;
-        while (hash->packet_number <= ch_in_cnx->mc_integrity_latest_pn_sent) {
-            if (hash->next == NULL || ((picoquic_multicast_packet_integrity_t*)hash->next)->is_active == 0) {
-                break;
-            }
+        while (hash->packet_number <= ch_in_cnx->mc_integrity_latest_pn_sent && hash->next != NULL && ((picoquic_multicast_packet_integrity_t*)hash->next)->is_active != 0) {
             hash = (picoquic_multicast_packet_integrity_t*)hash->next;
         }
         first_hash_to_be_sent = hash;
     }
-    
-    // Important: While this method is running, the separate sending thread probably extends the hash list in parellel.
-    // That's why we need to fix the last integrity hash potentially be sent with this method call to the value 
-    // of channel->packet_integrity_last when the following line gets executed.
-    last_hash_to_be_sent_max = channel->packet_integrity_last;
-    while(last_hash_to_be_sent_max->is_active == 0) {
-        last_hash_to_be_sent_max = (picoquic_multicast_packet_integrity_t*)last_hash_to_be_sent_max->prev;
-    }
 
     nb_hashes_to_be_sent_max = last_hash_to_be_sent_max->packet_number - first_hash_to_be_sent->packet_number + 1;
+
+    // Error while getting hashes
+    if (nb_hashes_to_be_sent_max <= 0) {
+        fprintf(stdout, "Error: nb_hashes_to_be_sent_max <= 0\n");
+        return bytes0;
+    }
 
     // Frame type
     // Channel ID Length
@@ -7781,17 +7786,28 @@ uint8_t* picoquic_format_mc_integrity_frame(uint8_t* bytes, uint8_t* bytes_max, 
         return bytes0;
     }
 
-    size_t nb_hashes_to_be_sent = floor(bytes_available / hash_size);
+    uint64_t nb_hashes_to_be_sent = floor(bytes_available / hash_size);
     picoquic_multicast_packet_integrity_t* last_hash_to_be_sent = last_hash_to_be_sent_max;
 
+    if (nb_hashes_to_be_sent <= 0) {
+        fprintf(stdout, "No space for integrity hashes in this packet\n");
+        return bytes0;
+    }
+
     if (nb_hashes_to_be_sent >= nb_hashes_to_be_sent_max) {
+        // There is more or enough space in this frame to fit all currently available hashes
         nb_hashes_to_be_sent = nb_hashes_to_be_sent_max;
     } else {
-        // Find last hash that can still be included in this frame
+        // There are more hashes available then space in this frame --> Find last hash that can still be included in this frame
         size_t nb_hashes_current = nb_hashes_to_be_sent_max;
-        while (nb_hashes_current > nb_hashes_to_be_sent) {
+        while (nb_hashes_current > nb_hashes_to_be_sent && last_hash_to_be_sent->prev != NULL) {
             last_hash_to_be_sent = (picoquic_multicast_packet_integrity_t*)last_hash_to_be_sent->prev;
-            nb_hashes_current = last_hash_to_be_sent - first_hash_to_be_sent + 1;
+            nb_hashes_current--;
+        }
+        if (nb_hashes_current > nb_hashes_to_be_sent) {
+            // Error: Finding last hash to be sent didn't work
+            fprintf(stdout, "More hashes available then space in frame && error finding last hash to be sent\n");
+            return bytes0;
         }
     }
 
@@ -7801,7 +7817,7 @@ uint8_t* picoquic_format_mc_integrity_frame(uint8_t* bytes, uint8_t* bytes_max, 
         return bytes0;
     }
 
-    // Packet hashes
+    // Packet hashes 
     if ((bytes + (nb_hashes_to_be_sent * hash_size)) > bytes_max) {
         return NULL;
     }
@@ -7817,6 +7833,7 @@ uint8_t* picoquic_format_mc_integrity_frame(uint8_t* bytes, uint8_t* bytes_max, 
     }
 
     if (nb_hashes_included != nb_hashes_to_be_sent) {
+        fprintf(stdout, "Fatal Logic Error: nb_hashes_included != nb_hashes_to_be_sent\n");
         return NULL;
     }
 
@@ -7826,9 +7843,12 @@ uint8_t* picoquic_format_mc_integrity_frame(uint8_t* bytes, uint8_t* bytes_max, 
     }
 
     // CLEAN MC: Refactor event/error logging to qlog    
-    fprintf(stdout, "Send MC_INTEGRITY for packet numbers %lu to %lu\n", first_hash_to_be_sent->packet_number, last_hash_to_be_sent->packet_number);
-    // print_hex_bytes(channel->channel_id.id, channel->channel_id.id_len);
-    // fprintf(stdout, "\n");
+    fprintf(stdout, "Send MC_INTEGRITY for packet numbers %lu to %lu (= %lu hashes sent, space available for %i hashes, %lu waiting hashes)\n", 
+        first_hash_to_be_sent->packet_number, 
+        last_hash_to_be_sent->packet_number, 
+        nb_hashes_included,
+        (int)floor(bytes_available / hash_size), 
+        nb_hashes_to_be_sent_max);
 
     return bytes;
 }
