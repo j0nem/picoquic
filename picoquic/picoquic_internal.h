@@ -324,7 +324,7 @@ typedef struct st_picoquic_packet_header_t {
  */
 typedef struct st_picoquic_packet_header_multicast_t {
     picoquic_multicast_channel_id_t channel_id;
-    uint32_t pn;
+    uint64_t pn;
     uint32_t vn;
     size_t offset; /* offset to the first byte of the payload.*/
     size_t pn_offset; /* offset to the first byte of the packet number */
@@ -1304,6 +1304,16 @@ typedef struct st_picoquic_multicast_integrity_ack_t {
     struct picoquic_multicast_integrity_ack_t* prev;
 } picoquic_multicast_integrity_ack_t;
 
+// Represents a received multicast data packet (that cannot be integrity checked yet)
+typedef struct st_picoquic_multicast_packet_t {
+    uint64_t pn;
+    uint8_t* hash;  // Generated hash on client from received data, to be compared with hash from MC_INTEGRITY packet
+    uint8_t* bytes; // Decrypted bytes of payload (without header)
+    size_t length;  // Length of bytes of payload (without header)
+    struct picoquic_multicast_packet_t* next;
+    struct picoquic_multicast_packet_t* prev;
+} picoquic_multicast_packet_t;
+
 typedef struct st_picoquic_multicast_channel_t {
     picoquic_quic_t* quic;
     picoquic_multicast_channel_id_t channel_id;
@@ -1316,7 +1326,7 @@ typedef struct st_picoquic_multicast_channel_t {
     int nb_aead_secrets;
     picoquic_crypto_context_t crypto_context; 
     uint16_t hash_algorithm;
-    char hash_algorithm_name[6];
+    char hash_algorithm_name[7];
     uint64_t max_rate; // max rate in kibps for this channel
     uint64_t max_ack_delay;
     int is_retired;
@@ -1456,6 +1466,8 @@ typedef struct st_picoquic_mc_channel_in_cnx_t {
     uint64_t latest_state_sequence_acked;
     uint64_t latest_limits_sequence_acked;
     uint64_t crypto_failure_count;
+    picoquic_multicast_packet_t* awaiting_integrity_check_first;
+    picoquic_multicast_packet_t* awaiting_integrity_check_last;
 } picoquic_mc_channel_in_cnx_t;
 
 uint8_t picoquic_spinbit_basic_multicast(picoquic_multicast_channel_t * channel);
@@ -2266,7 +2278,7 @@ int picoquic_queue_path_abandon_frame(picoquic_cnx_t* cnx,
     uint64_t unique_path_id, uint64_t reason);
 int picoquic_decode_frames_multicast(picoquic_mc_channel_in_cnx_t* ch_in_cnx, const uint8_t* bytes, size_t bytes_maxsize,
     picoquic_stream_data_node_t* received_data,
-    struct sockaddr* addr_from, struct sockaddr* addr_to, uint64_t pn64, uint64_t current_time);
+    uint64_t pn64, uint64_t current_time, int integrity_verified);
 int picoquic_decode_frames(picoquic_cnx_t* cnx, picoquic_path_t * path_x, const uint8_t* bytes, size_t bytes_max,
     picoquic_stream_data_node_t* received_data,
     int epoch, struct sockaddr* addr_from, struct sockaddr* addr_to, uint64_t pn64, int path_is_not_allocated, uint64_t current_time);

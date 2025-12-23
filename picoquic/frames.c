@@ -5215,11 +5215,16 @@ uint8_t* picoquic_decode_datagram_frame_header(uint8_t* bytes, const uint8_t* by
     return bytes;
 }
 
-const uint8_t* picoquic_decode_datagram_frame_multicast(picoquic_multicast_channel_t* channel, const uint8_t* bytes, const uint8_t* bytes_max)
-{
+const uint8_t* picoquic_decode_datagram_frame_multicast(picoquic_multicast_channel_t* channel, const uint8_t* bytes, const uint8_t* bytes_max,
+    int integrity_verified
+){
     uint8_t frame_id = *bytes++;
     unsigned int has_length = frame_id & 1;
     uint64_t length = 0;
+
+    if (integrity_verified == 0) {
+        return NULL;
+    }
 
     if (bytes != NULL) {
         if (has_length) {
@@ -6777,6 +6782,12 @@ const uint8_t* picoquic_decode_mc_announce_frame(picoquic_cnx_t* cnx, const uint
         return NULL;
     }
 
+    if (channel->hash_algorithm == PICOQUIC_SHA256) {
+        strcpy(channel->hash_algorithm_name, "sha256");
+    } else if (channel->hash_algorithm == PICOQUIC_SHA384) {
+        strcpy(channel->hash_algorithm_name, "sha384");
+    }
+
     // Max Rate
     // Max ACK delay
     if((bytes = picoquic_frames_varint_decode(bytes, bytes_max, &channel->max_rate)) == NULL
@@ -7853,125 +7864,152 @@ uint8_t* picoquic_format_mc_integrity_frame(uint8_t* bytes, uint8_t* bytes_max, 
     return bytes;
 }
 
-// const uint8_t* picoquic_decode_mc_key_frame(picoquic_cnx_t* cnx, const uint8_t* bytes, const uint8_t* bytes_max) {
-//     if (!cnx->is_multicast_enabled || !cnx->client_mode) {
-//         picoquic_connection_error_ex(cnx, PICOQUIC_TRANSPORT_FRAME_FORMAT_ERROR, picoquic_frame_type_mc_key, "received unexpected MC_KEY frame");
-//         return NULL;
-//     }
+const uint8_t* picoquic_decode_mc_integrity_frame(picoquic_cnx_t* cnx, const uint8_t* bytes, const uint8_t* bytes_max, 
+    uint64_t ftype, uint64_t current_time
+) {
+    if (!cnx->is_multicast_enabled || !cnx->client_mode) {
+        picoquic_connection_error_ex(cnx, PICOQUIC_TRANSPORT_FRAME_FORMAT_ERROR, ftype, "received unexpected MC_INTEGRITY frame");
+        return NULL;
+    }
 
-//     uint8_t channel_id_len;
-//     picoquic_multicast_channel_id_t channel_id;
-//     const uint8_t* bytes0 = bytes;
+    uint8_t channel_id_len;
+    picoquic_multicast_channel_id_t channel_id;
+    const uint8_t* bytes0 = bytes;
 
-//     // Channel ID Length
-//     if ((bytes = picoquic_frames_uint8_decode(bytes, bytes_max, &channel_id_len)) == NULL) {
-//         return NULL;
-//     }
+    // Channel ID Length
+    if ((bytes = picoquic_frames_uint8_decode(bytes, bytes_max, &channel_id_len)) == NULL) {
+        return NULL;
+    }
 
-//     // Channel ID
-//     uint8_t bytes_copied = picoquic_parse_multicast_channel_id(bytes, channel_id_len, &channel_id);
-//     if (bytes_copied == 0) {
-//         return NULL;
-//     } else {
-//         bytes += bytes_copied;
-//     }
+    // Channel ID
+    uint8_t bytes_copied = picoquic_parse_multicast_channel_id(bytes, channel_id_len, &channel_id);
+    if (bytes_copied == 0) {
+        return NULL;
+    } else {
+        bytes += bytes_copied;
+    }
 
-//     picoquic_mc_channel_in_cnx_t* channel_found = picoquic_find_multicast_channel_in_cnx(&channel_id, cnx);
-//     picoquic_multicast_channel_t* channel_global = picoquic_find_multicast_channel_global(&channel_id, cnx->quic);
+    picoquic_mc_channel_in_cnx_t* channel_found = picoquic_find_multicast_channel_in_cnx(&channel_id, cnx);
+    
+    if (channel_found == NULL) {
+        picoquic_connection_error_ex(cnx, PICOQUIC_TRANSPORT_FRAME_FORMAT_ERROR, ftype, "received MC_INTEGRITY frame for unjoined channel");
+        // TODO MC: Send MC_STATE(Left) to server?
+        return NULL;
+    }
 
-//     picoquic_multicast_channel_t* channel;
-//     if (channel_found != NULL) {
-//         channel = channel_found->channel;
-//     } else if (channel_global != NULL) {
-//         // TODO MC: Move this semantic checks to higher level methods and just stupidly try to parse the frame here?
-//         // Do not allow a channel in multiple connections
-//         return picoquic_skip_mc_key_frame(bytes0, bytes_max);
-//     } 
-//     else {
-//         channel = malloc(sizeof(picoquic_multicast_channel_t));
-//         if (channel == NULL) {
-//             fprintf(stderr, "could not create multicast channel: malloc failed\n");
-//             return NULL;
-//         }
+    picoquic_multicast_channel_t* channel = channel_found->channel;
 
-//         channel->channel_id = channel_id;
-//         channel->client_mode = 1;
-//     }
+    // Packet Number Start
+    uint64_t pkt_nb_start;
+    if ((bytes = picoquic_frames_varint_decode(bytes, bytes_max, &pkt_nb_start)) == NULL) {
+        return NULL;
+    }
 
-//     picoquic_multicast_aead_secret_t* aead = malloc(sizeof(picoquic_multicast_aead_secret_t));
-//     if (aead == NULL) {
-//         fprintf(stderr, "could not create picoquic_mc_channel_in_cnx_t: malloc failed\n");
-//         return NULL;
-//     }
+    // Length
+    uint64_t nb_hashes;
 
-//     memset(aead, 0, sizeof(picoquic_multicast_aead_secret_t));
+    // Get hash size
+    size_t hash_length = picoquic_hash_get_length(channel->hash_algorithm_name);
+    if (hash_length == 0) {
+        return NULL;
+    }
 
-//     // Key Seq Number
-//     // From Pkt Number
-//     // Secret Length
-//     if ((bytes = picoquic_frames_varint_decode(bytes, bytes_max, &aead->key_seq_number)) == NULL
-//         || (bytes = picoquic_frames_varint_decode(bytes, bytes_max, &aead->from_pkt_number)) == NULL
-//         || (bytes = picoquic_frames_varint_decode(bytes, bytes_max, &aead->secret_len)) == NULL) {
-//         return NULL;
-//     }
+    if (ftype == picoquic_frame_type_mc_integrity_l) {
+        if ((bytes = picoquic_frames_varint_decode(bytes, bytes_max, &nb_hashes)) == NULL) {
+            return NULL;
+        }
+    } else {
+        nb_hashes = floor((bytes_max - bytes) / hash_length);
+    }
 
-//     // Validate key properties
-//     if (channel_found != NULL && channel_found->key_available == 1 && channel_found->channel->nb_aead_secrets > 0 && 
-//         (channel_found->latest_key_sequence_available + 1 != aead->key_seq_number
-//         || channel_found->channel->aead_secrets[channel_found->channel->nb_aead_secrets]->from_pkt_number > aead->from_pkt_number)) 
-//     {
-//         fprintf(stderr, "Error: Received a MC_KEY with invalid properties\n");
-//         return NULL;
-//     }
+    uint64_t pkt_nb_end = pkt_nb_start + nb_hashes - 1;
+    
+    // Find out which integrity hashes for contained packets were already received
+    uint64_t nb_already_received = 0;
+    int already_received[nb_hashes];
+    picoquic_multicast_packet_integrity_t* current = channel->packet_integrity_first;
+    while(current != NULL && nb_already_received < nb_hashes) {
+        if (current->packet_number >= pkt_nb_start && current->packet_number <= pkt_nb_end) {
+            nb_already_received++;
+            already_received[current->packet_number - pkt_nb_start] = 1;
+            fprintf(stdout, "Integrity hash for packet number %lu already received, skipping\n", current->packet_number);
+        }
+        current = ((picoquic_multicast_packet_integrity_t*)current->next);
+    }
 
-//     // Secret
-//     // 48 is currently the global max in picoquic for aead secret len
-//     if ((bytes + aead->secret_len) > bytes_max || aead->secret_len > 48) {
-//         return NULL;
-//     } else {
-//         memcpy(aead->secret, bytes, aead->secret_len);
-//         bytes += aead->secret_len;
-//     }
+    // If no new hashes in frame, skip
+    if (nb_hashes == nb_already_received) {
+        return picoquic_skip_mc_integrity_frame(bytes0, bytes_max, ftype);
+    }
 
-//     // Add aead object to channel
-//     picoquic_multicast_aead_secret_t** new_aead_list = (picoquic_multicast_aead_secret_t **)malloc((channel->nb_aead_secrets + 1) * sizeof(picoquic_multicast_aead_secret_t *));
-//     if (new_aead_list == NULL) { 
-//         return NULL;
-//     }
+    for (int number = pkt_nb_start; number <= pkt_nb_end; number++) {
+        if (already_received[number - pkt_nb_start] == 1) {
+            bytes += hash_length;
+            continue;
+        }
 
-//     if (channel->aead_secrets != NULL) {
-//         memset(new_aead_list, 0, sizeof(picoquic_multicast_aead_secret_t*));
-//         if (channel->nb_aead_secrets > 0) {
-//             memcpy(new_aead_list, channel->aead_secrets, channel->nb_aead_secrets * sizeof(picoquic_multicast_aead_secret_t *));
-//         }
-//         free(channel->aead_secrets);
-//     }
-//     channel->aead_secrets = new_aead_list;
+        picoquic_multicast_packet_integrity_t* pi_new = calloc(1, sizeof(picoquic_multicast_packet_integrity_t));
+        pi_new->hash = calloc(1, hash_length);
 
-//     channel->aead_secrets[channel->nb_aead_secrets] = aead;
-//     channel->nb_aead_secrets++;
+        memcpy(pi_new->hash, bytes, hash_length);
+        bytes += hash_length;
+        pi_new->packet_number = number;
 
-//     // Add aead crypto context to channel (only decryption)
-//     picoquic_setup_multicast_crypto_context_aead(cnx->quic, aead, &channel->crypto_context, channel->aead_algorithm, 0);
+        // Add pi_new to chain in channel
+        if (channel->packet_integrity_first == NULL || channel->packet_integrity_first == NULL) {
+            channel->packet_integrity_first = channel->packet_integrity_last = pi_new;
+        } else {
+            pi_new->prev = (struct picoquic_multicast_packet_integrity_t*)channel->packet_integrity_last;
+            channel->packet_integrity_last->next = (struct picoquic_multicast_packet_integrity_t*)pi_new;
+            channel->packet_integrity_last = pi_new;
+        }
 
-//     // Add channel to cnx if not already done
-//     picoquic_mc_channel_in_cnx_t* new_channel_in_cnx;
+        pi_new->is_active = 1;
+    }
+    
+    // For all existing and new packet integrity hashes, verify them if the original data frame was already received
+    // and once verified, push original data frame to application
 
-//     if (channel_found != NULL) {
-//         new_channel_in_cnx = channel_found;
-//     } else {
-//         new_channel_in_cnx = picoquic_add_channel_to_cnx(cnx, channel);
-//         if (new_channel_in_cnx == NULL) {
-//             fprintf(stderr, "could not create picoquic_mc_channel_in_cnx_t\n");
-//             return NULL;
-//         }
-//     }
+    picoquic_multicast_packet_t* packet = channel_found->awaiting_integrity_check_first;
+    while(packet != NULL) {
+        picoquic_multicast_packet_integrity_t* integrity = channel->packet_integrity_first;
 
-//     new_channel_in_cnx->key_available = 1;
-//     new_channel_in_cnx->latest_key_sequence_available = aead->key_seq_number;
+        while (integrity != NULL) {
+            if (integrity->packet_number == packet->pn && packet->bytes == NULL && packet->length != 0) {
+                if (memcmp(packet->hash, integrity->hash, hash_length) != 0) {
+                    fprintf(stdout, "Hash of packet number %lu could NOT be verified\n", packet->pn);
+                    continue;
+                } 
 
-//     return bytes;
-// }
+                // Hash verified! Decode frames and forward it to application
+                fprintf(stdout, "Hash of packet number %lu VERIFIED!\n", packet->pn);
+                picoquic_decode_frames_multicast(channel_found, packet->bytes, packet->length, 
+                    NULL, packet->pn, current_time, 1
+                );
+
+                // Remove packet from awaiting_integrity_check list
+                if (packet->next != NULL) {
+                    ((picoquic_multicast_packet_t*)packet->next)->prev = packet->prev;
+                } else {
+                    channel_found->awaiting_integrity_check_last = (picoquic_multicast_packet_t*)packet->prev;
+                }
+                if (packet->prev != NULL) {
+                    ((picoquic_multicast_packet_t*)packet->prev)->next = packet->next;
+                } else {
+                    channel_found->awaiting_integrity_check_first = (picoquic_multicast_packet_t*)packet->next;
+                }
+                free(packet->bytes);
+                free(packet->hash);
+                free(packet);
+            }
+
+            integrity = ((picoquic_multicast_packet_integrity_t*)integrity->next);
+        }
+        packet = ((picoquic_multicast_packet_t*)packet->next);
+    }
+
+    return bytes;
+}
 
 const uint8_t* picoquic_skip_mc_integrity_frame(const uint8_t* bytes, const uint8_t* bytes_max, uint64_t ftype)
 {
@@ -8081,6 +8119,7 @@ int picoquic_process_ack_of_mc_integrity_frame(picoquic_cnx_t* cnx, const uint8_
     *consumed = bytes_next - bytes_first;
 
     fprintf(stdout, "ACK of MC_INTEGRITY sucessfully processed\n");
+    // TODO MC: Cleanup: Remove integrity hash from list of hashes when all clients ACKed the MC_INTEGRITY frame?
 
     return 0;
 }
@@ -8289,31 +8328,104 @@ uint8_t* picoquic_format_bdp_frame(picoquic_cnx_t* cnx, uint8_t* bytes, uint8_t*
 }
 
 /*
- * Decoding of the received frames.
- *
- * In some cases, the expected frames are "restricted" to only ACK, STREAM 0 and PADDING.
- */
+ * Decoding of the received frames for multicast.
 
+ * If the `MC_INTEGRITY` frame for this packet was not already received,
+ * just store the packet in the context and wait until the corresponding `MC_INTEGRITY` arrives.
+ * 
+ * Once the `MC_INTEGRITY` for the packet arrives, the decode method for the `MC_INTEGRITY` frame
+ * will call this method again with `integrity_verified = 1`. 
+ * The data in the frames can then finally be forwarded to the application.
+ */
 int picoquic_decode_frames_multicast(picoquic_mc_channel_in_cnx_t* ch_in_cnx, const uint8_t* bytes,
     size_t bytes_maxsize,
     picoquic_stream_data_node_t* received_data,
-    struct sockaddr* addr_from,
-    struct sockaddr* addr_to,
     uint64_t pn64,
-    uint64_t current_time)
+    uint64_t current_time,
+    int integrity_verified)
 {
     const uint8_t *bytes_max = bytes + bytes_maxsize;
     int ack_needed = 0;
-    picoquic_packet_data_t packet_data;
+    // picoquic_packet_data_t packet_data;
+    // memset(&packet_data, 0, sizeof(packet_data));
+    picoquic_multicast_channel_t* channel = ch_in_cnx->channel;
+    picoquic_multicast_packet_t* packet = NULL;
 
-    memset(&packet_data, 0, sizeof(packet_data));
+    // Integrity hash verification
+    if (integrity_verified == 0) {
+        // Get hash size
+        size_t hash_length = picoquic_hash_get_length(channel->hash_algorithm_name);
+        if (hash_length == 0) {
+            return PICOQUIC_ERROR_DETECTED;
+        }
+
+        // Try to find packet hash in awaiting_integrity_check
+        picoquic_multicast_packet_t* pkt = ch_in_cnx->awaiting_integrity_check_first;
+        while(pkt != NULL) {
+            if (pkt->pn == pn64) {
+                packet = pkt;
+                break;
+            }
+            pkt = (picoquic_multicast_packet_t*)pkt->next;
+        }
+
+        // If element not be found, we have a logic error
+        if (packet == NULL)  {
+            return PICOQUIC_ERROR_DETECTED;
+        }
+        
+        // Try to find integrity hash for this packet (but probably not received yet)
+        picoquic_multicast_packet_integrity_t* integrity = channel->packet_integrity_first;
+        while (integrity != NULL && integrity_verified == 0) {
+            if (integrity->packet_number == pn64) {
+                if (memcmp(packet->hash, integrity->hash, hash_length) != 0) {
+                    fprintf(stdout, "Hash of packet number %lu could NOT be verified\n", pn64);
+                    continue;
+                }
+
+                // Hash verified! Decode frames and forward it to application
+                fprintf(stdout, "Hash of packet number %lu VERIFIED (without caching)!\n", pn64);
+                integrity_verified = 1;
+
+                // Remove packet from awaiting_integrity_check list
+                if (packet->next != NULL) {
+                    ((picoquic_multicast_packet_t*)packet->next)->prev = packet->prev;
+                } else {
+                    ch_in_cnx->awaiting_integrity_check_last = (picoquic_multicast_packet_t*)packet->prev;
+                }
+                if (packet->prev != NULL) {
+                    ((picoquic_multicast_packet_t*)packet->prev)->next = packet->next;
+                } else {
+                    ch_in_cnx->awaiting_integrity_check_first = (picoquic_multicast_packet_t*)packet->next;
+                }
+                free(packet->bytes);
+                free(packet->hash);
+                free(packet);
+            }
+
+            integrity = ((picoquic_multicast_packet_integrity_t*)integrity->next);
+        }
+    }
+
+    // Store packet bytes and skip packet decoding
+    if (integrity_verified == 0) {
+        packet->bytes = calloc(1, bytes_maxsize);
+        if (packet->bytes == NULL) {
+            return PICOQUIC_ERROR_DETECTED;
+        }
+        memcpy(packet->bytes, bytes, bytes_maxsize);
+        packet->length = bytes_maxsize;
+
+        // Skip packet decoding for now
+        return 0;
+    }
 
     while (bytes != NULL && bytes < bytes_max) {
         uint8_t first_byte = bytes[0];
 
         if (PICOQUIC_IN_RANGE(first_byte, picoquic_frame_type_stream_range_min, picoquic_frame_type_stream_range_max)) {
             // TODO MC: Support STREAM frame in multicast
-            // bytes = picoquic_decode_stream_frame(cnx, bytes, bytes_max, received_data, current_time);
+            // bytes = picoquic_decode_stream_frame_multicast(cnx, bytes, bytes_max, received_data, current_time, integrity_verified);
             ack_needed = 1;
         }
         else if (first_byte != picoquic_frame_type_padding
@@ -8349,7 +8461,7 @@ int picoquic_decode_frames_multicast(picoquic_mc_channel_in_cnx_t* ch_in_cnx, co
             case picoquic_frame_type_datagram_l:
                 /* Datagram carrying packets are acked, but not repeated */
                 ack_needed = 1;
-                bytes = picoquic_decode_datagram_frame_multicast(ch_in_cnx->channel, bytes, bytes_max);
+                bytes = picoquic_decode_datagram_frame_multicast(ch_in_cnx->channel, bytes, bytes_max, integrity_verified);
                 break;
             default: {
                 uint64_t frame_id64;
@@ -8766,8 +8878,7 @@ int picoquic_decode_frames(picoquic_cnx_t* cnx, picoquic_path_t * path_x, const 
                             break;
                         case picoquic_frame_type_mc_integrity: 
                         case picoquic_frame_type_mc_integrity_l: 
-                            bytes = picoquic_skip_mc_integrity_frame(bytes, bytes_max, frame_id64);
-                            fprintf(stdout, "DETECTED MC INTEGRITY FRAME\n");
+                            bytes = picoquic_decode_mc_integrity_frame(cnx, bytes, bytes_max, frame_id64, current_time);
                             break;
                         default:
                             /* Not implemented yet! */

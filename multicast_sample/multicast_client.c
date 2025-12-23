@@ -267,7 +267,7 @@ int multicast_client_callback_multicast(picoquic_multicast_channel_t* channel,
                     is_final_datagram = 1;
                 }
 
-                if (client_ctx->F == NULL && is_first == 1)
+                if (client_ctx->F == NULL)
                 {
                     /* Open the file to receive the data. This is done at the last possible moment,
                     * to minimize the number of files open simultaneously.

@@ -1098,6 +1098,57 @@ int picoquic_parse_header_and_decrypt(
     return ret;
 }
 
+// Generate integrity hash here and store in context
+int picoquic_generate_multicast_integrity_hash_incoming(picoquic_mc_channel_in_cnx_t* ch_in_cnx, uint8_t* raw_bytes, 
+    size_t length, uint64_t pn64
+) {
+    // Skip if packet number is already in awaiting_integrity_check list
+    picoquic_multicast_packet_t* pkt = ch_in_cnx->awaiting_integrity_check_first;
+    while(pkt != NULL) {
+        if (pkt->pn == pn64) {
+            return 0;
+        }
+        pkt = (picoquic_multicast_packet_t*)pkt->next;
+    }
+
+    picoquic_multicast_channel_t* channel = ch_in_cnx->channel;
+
+    size_t hash_length = picoquic_hash_get_length(channel->hash_algorithm_name);
+    if (hash_length == 0) {
+        return PICOQUIC_ERROR_DETECTED;
+    }
+
+    picoquic_multicast_packet_t* packet = calloc(1, sizeof(picoquic_multicast_packet_t));
+    if (packet == NULL) {
+        return PICOQUIC_ERROR_MEMORY;
+    }
+
+    packet->hash = calloc(1, hash_length);
+    if (packet->hash == NULL) {
+        return PICOQUIC_ERROR_MEMORY;
+    }
+
+    void * hash_ctx = picoquic_hash_create(channel->hash_algorithm_name);
+    if (hash_ctx == NULL) {
+        return PICOQUIC_ERROR_DETECTED;
+    }
+
+    picoquic_hash_update(raw_bytes, length, hash_ctx);
+    picoquic_hash_finalize(packet->hash, hash_ctx);
+    packet->pn = pn64;
+
+    // add packet as last list element of awaiting_integrity_check packets
+    if(ch_in_cnx->awaiting_integrity_check_first == NULL && ch_in_cnx->awaiting_integrity_check_last == NULL) {
+        ch_in_cnx->awaiting_integrity_check_first = ch_in_cnx->awaiting_integrity_check_last = packet;
+    } else {
+        packet->prev = (struct picoquic_multicast_packet_t*)ch_in_cnx->awaiting_integrity_check_last;
+        ch_in_cnx->awaiting_integrity_check_last->next = (struct picoquic_multicast_packet_t*)packet;
+        ch_in_cnx->awaiting_integrity_check_last = packet;
+    }
+
+    return 0;
+}
+
 int picoquic_parse_header_and_decrypt_multicast(
     picoquic_quic_t* quic,
     const uint8_t* bytes,
@@ -2482,7 +2533,7 @@ int picoquic_incoming_1rtt_multicast(
         /* Accept the incoming frames */
         ret = picoquic_decode_frames_multicast(ch_in_cnx,
             bytes + phm->offset, phm->payload_length, received_data,
-            addr_from, addr_to, (uint64_t)phm->pn, current_time);
+            phm->pn, current_time, 0);
 
         if (ret == 0) {
             /* Compute receive bandwidth */
@@ -2743,6 +2794,9 @@ int picoquic_incoming_segment(
         ret = picoquic_parse_header_and_decrypt_multicast(quic, raw_bytes, length, packet_length, addr_from,
             current_time, decrypted_data, &phm, &mc_ch_in_cnx, consumed);
         bytes = decrypted_data->data;
+            
+        ret = picoquic_generate_multicast_integrity_hash_incoming(mc_ch_in_cnx, raw_bytes, 
+            length, phm.pn);
     }
 
     if (mc_ch_in_cnx == NULL) {
