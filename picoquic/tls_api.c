@@ -663,7 +663,7 @@ void* picoquic_get_cipher_suite_by_id_v(int cipher_suite_id, int use_low_memory)
     return (void*)picoquic_get_cipher_suite_by_id(cipher_suite_id, use_low_memory);
 }
 
-void picoquic_hash_update(uint8_t* input, size_t input_length, void* hash_context) {
+void picoquic_hash_update(const uint8_t* input, size_t input_length, void* hash_context) {
     ((ptls_hash_context_t*)hash_context)->update((ptls_hash_context_t*)hash_context, input, input_length);
 }
 

@@ -141,6 +141,10 @@ const char * ftype2str(picoquic_frame_type_enum_t ftype)
         return "mc_state_multicast";
     case picoquic_frame_type_mc_state_application:
         return "mc_state_application";
+    case picoquic_frame_type_mc_integrity:
+        return "mc_integrity_no_length";
+    case picoquic_frame_type_mc_integrity_l:
+        return "mc_integrity_with_length";
     default:
         return "unknown";
     }

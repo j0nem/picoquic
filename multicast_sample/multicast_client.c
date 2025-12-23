@@ -232,34 +232,6 @@ static void multicast_client_free_context(multicast_client_ctx_t *client_ctx)
     }
 }
 
-/* Return 1 if bytes array has datagram prefix */
-int multicast_client_has_datagram_prefix(uint8_t* bytes, int prefix_length) {
-    fprintf(stdout, "DEBUG: First five bytes: 0x%x, 0x%x, 0x%x, 0x%x, 0x%x\n", bytes[0], bytes[1], bytes[2], bytes[3], bytes[4]);
-
-    for (int i = 0; i < prefix_length; i++) {
-        if (bytes[i] != multicast_datagram_prefix[i]) {
-            return 0;
-        }
-    }
-
-    return 1;
-}
-
-/* Return 1 if bytes array has datagram suffix */
-int multicast_client_has_datagram_suffix(uint8_t* bytes, size_t length, int suffix_length) {
-    fprintf(stdout, "DEBUG: Last five bytes: 0x%x, 0x%x, 0x%x, 0x%x, 0x%x\n", bytes[length - 5], bytes[length - 4], bytes[length - 3], bytes[length - 2], bytes[length - 1]);
-
-    int bytepos = suffix_length;
-    for (int i = 0; i < suffix_length; i++) {
-        if (bytes[length - bytepos] != multicast_datagram_suffix[i]) {
-            return 0;
-        }
-        bytepos--;
-    }
-
-    return 1;
-}
-
 int multicast_client_callback_multicast(picoquic_multicast_channel_t* channel, 
     uint64_t stream_id, uint8_t *bytes, size_t length, 
     picoquic_call_back_event_t fin_or_event, void *callback_ctx, void *v_stream_ctx
@@ -280,27 +252,28 @@ int multicast_client_callback_multicast(picoquic_multicast_channel_t* channel,
         switch (fin_or_event)
         {
             case picoquic_callback_multicast_datagram:
-                fprintf(stdout, "CALLBACK picoquic_callback_multicast_datagram called!\n");
                 /* Data arrival on datagram */
                 
-                int skip_bytes_start = 0;
-                int skip_bytes_end = 0;
                 int is_final_datagram = 0; // close file and mark as finished when file suffix detected
-                int prefix_suffix_length = PICOQUIC_MULTICAST_DATAGRAM_PREFIX_SUFFIX_LENGTH;
+                int header_length = PICOQUIC_MULTICAST_DATAGRAM_HEADER_LENGTH;
 
-                if (multicast_client_has_datagram_suffix(bytes, length, prefix_suffix_length) == 1) {
-                    skip_bytes_end = prefix_suffix_length;
+                int is_last = (*(bytes) >> (uint8_t) 0) & (uint8_t) 1;
+                int is_first = (*(bytes) >> (uint8_t) 1) & (uint8_t) 1;
+
+                uint64_t fragment_number;
+                memcpy(&fragment_number, (bytes + 1), 8);
+
+                if (is_last == 1) {
                     is_final_datagram = 1;
                 }
 
-                if (client_ctx->F == NULL && multicast_client_has_datagram_prefix(bytes, prefix_suffix_length) == 1)
+                if (client_ctx->F == NULL)
                 {
                     /* Open the file to receive the data. This is done at the last possible moment,
                     * to minimize the number of files open simultaneously.
                     * When formatting the file_path, verify that the directory name is zero-length,
                     * or terminated by a proper file separator.
-                       */
-                    skip_bytes_start = prefix_suffix_length;
+                    */
                     char file_path[1024];
                     size_t dir_len = strlen(client_ctx->default_dir);
                     size_t file_name_len = strlen(PICOQUIC_MULTICAST_CLIENT_DATA_FILENAME);
@@ -338,8 +311,10 @@ int multicast_client_callback_multicast(picoquic_multicast_channel_t* channel,
 
                 if (ret == 0 && length > 0)
                 {
+                    fprintf(stdout, "GOT multicast datagram (fragment number: %lu, is_first: %i, is_last: %i) in application\n", fragment_number, is_first, is_last);
+
                     /* write the received bytes to the file */
-                    if (fwrite(bytes + skip_bytes_start, length - skip_bytes_start - skip_bytes_end, 1, client_ctx->F) != 1)
+                    if (fwrite(bytes + header_length, length - header_length, 1, client_ctx->F) != 1)
                     {
                         /* Could not write file to disk */
                         fprintf(stderr, "app: Could not write data to disk.\n");
@@ -347,7 +322,6 @@ int multicast_client_callback_multicast(picoquic_multicast_channel_t* channel,
                     }
                     else
                     {
-                        fprintf(stdout, "WRITTEN DAT TO FILE: %s\n", PICOQUIC_MULTICAST_CLIENT_DATA_FILENAME);
                         client_ctx->bytes_received += length;
                     }
                 }
@@ -615,6 +589,7 @@ static int multicast_client_init(char const *server_name, int server_port, char 
 
             // Multicast settings
             client_ctx->tp_params = malloc(sizeof(picoquic_tp_multicast_client_params_t));
+            memset(client_ctx->tp_params, 0, sizeof(picoquic_tp_multicast_client_params_t));
             client_ctx->tp_params->max_aggregate_rate = (uint64_t)max_rate;
 
             picoquic_set_default_multicast_option(*quic, 1);

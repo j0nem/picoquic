@@ -285,56 +285,57 @@ int multicast_sender_callback(picoquic_multicast_channel_t* channel,
             }
 
             // Use 5-byte prefix and 5-byte suffix to indicate start and end of file to receiver
-            int has_prefix = 0;
-            int has_suffix = 0;
-            int prefix_suffix_length = PICOQUIC_MULTICAST_DATAGRAM_PREFIX_SUFFIX_LENGTH;
+            int is_first = 0;
+            int is_last = 0;
+            int header_length = PICOQUIC_MULTICAST_DATAGRAM_HEADER_LENGTH;
 
             /* Implement the zero copy callback */
-            size_t available = datagram_ctx->file_length - datagram_ctx->file_sent;
+            size_t available = datagram_ctx->file_length - datagram_ctx->file_sent + header_length;
             int more_data = 0;
             uint8_t *buffer;
 
-            if (datagram_ctx->file_sent == 0) {
-                has_prefix = 1;
-                available += prefix_suffix_length;
+            if (datagram_ctx->file_sent == 0 && datagram_ctx->fragment_number == 0) {
+                is_first = 1;
+            } else {
+                datagram_ctx->fragment_number++;
             }
             
-            if (available + prefix_suffix_length > length) {
+            if (available > length) {
                 available = length;
                 more_data = 1;
             } else {
-                has_suffix = 1;
-                available += prefix_suffix_length;
+                is_last = 1;
             }
 
             buffer = picoquic_provide_datagram_buffer_ex(bytes, available, picoquic_datagram_active_any_path);
-            if (buffer != NULL) {
+            if (buffer != NULL && available > PICOQUIC_MULTICAST_DATAGRAM_HEADER_LENGTH) {
                 uint8_t* start_fread = buffer;
 
-                if (has_prefix == 1) {
-                    memcpy(buffer, multicast_datagram_prefix, prefix_suffix_length);
-                    start_fread += prefix_suffix_length;
-                    available -= prefix_suffix_length;
-                } 
+                uint8_t first_byte = 0;
+                first_byte = first_byte | (uint8_t) is_last << (uint8_t) 0;
+                first_byte = first_byte | (uint8_t) is_first << (uint8_t) 1;
 
-                size_t bytes_to_be_read = available;
-                if (has_suffix == 1) {
-                    bytes_to_be_read -= prefix_suffix_length;
+                memcpy(buffer, &first_byte, 1);
+                memcpy(buffer + 1, &(datagram_ctx->fragment_number), 8);
+                start_fread += header_length;
+                available -= header_length;
+
+                if (is_last == 1 && is_first != 1) {
+                    fprintf(stdout, "is_last sent: First byte = 0x%x\n", buffer[0]);
+                } else if (is_last != 1 && is_first == 1) {
+                    fprintf(stdout, "is_first sent: First byte = 0x%x\n", buffer[0]);
+                } else if (is_last == 1 && is_first == 1) {
+                    fprintf(stdout, "is_first and is_last sent: First byte = 0x%x\n", buffer[0]);
                 }
 
-                size_t nb_read = fread(start_fread, 1, bytes_to_be_read, datagram_ctx->F);
+                size_t nb_read = fread(start_fread, 1, available, datagram_ctx->F);
 
-                if ((nb_read != available && has_suffix == 0) || (nb_read + prefix_suffix_length != available && has_suffix == 1)) {
+                if (nb_read != available) {
                     /* Error while reading the file */
                     ret = -1;           
                 }
                 else {
                     datagram_ctx->file_sent += nb_read;
-                }
-
-                if (has_suffix == 1) {
-                    memcpy(start_fread + nb_read, multicast_datagram_suffix, prefix_suffix_length);
-                    fprintf(stdout, "Last five bytes to be sent: 0x%x, 0x%x, 0x%x, 0x%x, 0x%x\n", buffer[available - 5], buffer[available - 4], buffer[available - 3], buffer[available - 2], buffer[available - 1]);
                 }
             }
             else {

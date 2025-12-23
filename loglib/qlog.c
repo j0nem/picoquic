@@ -1466,6 +1466,34 @@ void qlog_mc_state_frame(FILE* f, bytestream* s)
     fprintf(f, "\"");
 }
 
+void qlog_mc_integrity_frame(uint64_t ftype, FILE* f, bytestream* s)
+{
+    uint64_t channel_id_length = 0;
+    byteread_vint(s, &channel_id_length);
+    fprintf(f, ", \"channel_id_length\": %"PRIu64"", channel_id_length);
+
+    fprintf(f, ", \"channel_id\": \"");
+    for (uint64_t i = 0; i < channel_id_length; i++) {
+        uint8_t byte = 0;
+        byteread_int8(s, &byte);
+        if (i == 0) {
+            fprintf(f, "%02X", byte);
+        } else {
+            fprintf(f, " %02X", byte);
+        }
+    }
+
+    uint64_t pn_start = 0;
+    byteread_vint(s, &pn_start);
+    fprintf(f, "\", \"packet_number_start\": %"PRIu64"", pn_start);
+
+    if ((ftype & 1) != 0) {
+        uint64_t hashes_length = 0;
+        byteread_vint(s, &hashes_length);
+        fprintf(f, ", \"hashes_length\": %"PRIu64"", hashes_length);
+    }
+}
+
 void qlog_observed_address_frame(uint64_t ftype, FILE* f, bytestream* s)
 {
     unsigned int port = 0;
@@ -1659,6 +1687,10 @@ int qlog_packet_frame(bytestream * s, void * ptr)
     case picoquic_frame_type_mc_state_multicast:
     case picoquic_frame_type_mc_state_application:
         qlog_mc_state_frame(f, s);
+        break;
+    case picoquic_frame_type_mc_integrity:
+    case picoquic_frame_type_mc_integrity_l:
+        qlog_mc_integrity_frame(ftype, f, s);
         break;
     default:
         s->ptr = ptr_before_type;

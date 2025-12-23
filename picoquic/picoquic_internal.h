@@ -324,7 +324,7 @@ typedef struct st_picoquic_packet_header_t {
  */
 typedef struct st_picoquic_packet_header_multicast_t {
     picoquic_multicast_channel_id_t channel_id;
-    uint32_t pn;
+    uint64_t pn;
     uint32_t vn;
     size_t offset; /* offset to the first byte of the payload.*/
     size_t pn_offset; /* offset to the first byte of the packet number */
@@ -1287,6 +1287,33 @@ typedef struct st_picoquic_crypto_context_t {
 
 typedef struct st_picoquic_mc_channel_in_cnx_t picoquic_mc_channel_in_cnx_t;
 
+// Represents the integrity hash for one multicast packet
+typedef struct st_picoquic_multicast_packet_integrity_t {
+    uint64_t packet_number;
+    uint8_t* hash;
+    int is_active;  // indicator if writing data for this element is finished and it can be used (for concurrency reasons)
+    struct picoquic_multicast_packet_integrity_t* next;
+    struct picoquic_multicast_packet_integrity_t* prev;
+} picoquic_multicast_packet_integrity_t;
+
+// Represents the ACK for one MC_INTEGRITY frame
+typedef struct st_picoquic_multicast_integrity_ack_t {
+    uint64_t packet_number_start;
+    uint64_t nb_hashes;
+    struct picoquic_multicast_integrity_ack_t* next;
+    struct picoquic_multicast_integrity_ack_t* prev;
+} picoquic_multicast_integrity_ack_t;
+
+// Represents a received multicast data packet (that cannot be integrity checked yet)
+typedef struct st_picoquic_multicast_packet_t {
+    uint64_t pn;
+    uint8_t* hash;  // Generated hash on client from received data, to be compared with hash from MC_INTEGRITY packet
+    uint8_t* bytes; // Decrypted bytes of payload (without header)
+    size_t length;  // Length of bytes of payload (without header)
+    struct picoquic_multicast_packet_t* next;
+    struct picoquic_multicast_packet_t* prev;
+} picoquic_multicast_packet_t;
+
 typedef struct st_picoquic_multicast_channel_t {
     picoquic_quic_t* quic;
     picoquic_multicast_channel_id_t channel_id;
@@ -1299,14 +1326,15 @@ typedef struct st_picoquic_multicast_channel_t {
     int nb_aead_secrets;
     picoquic_crypto_context_t crypto_context; 
     uint16_t hash_algorithm;
-    uint64_t max_rate; // max rate in mbps for this channel
+    char hash_algorithm_name[7];
+    uint64_t max_rate; // max rate in kibps for this channel
     uint64_t max_ack_delay;
     int is_retired;
 
     // points to cnx where this channel was added to, may not yet joined or already left/retired
-    picoquic_mc_channel_in_cnx_t** used_in_cnx; 
+    picoquic_mc_channel_in_cnx_t** used_in_cnx;
     // ENHANCE MC: number of cnx where this channel is used, currently a channel can only be used in one cnx in client mode
-    int nb_used_in_cnx;                        
+    int nb_used_in_cnx;
 
     int client_mode;     // 0: sending (server), 1: receiving (client)
     int socket_open;     // bool, if a socket is opened
@@ -1317,7 +1345,12 @@ typedef struct st_picoquic_multicast_channel_t {
     /* Call back function and context */
     picoquic_stream_data_mc_cb_fn callback_fn;
     void* callback_ctx;
-
+    
+    picoquic_packet_t* p_first_packet;
+    int nb_packets_in_pool;
+    int nb_packets_allocated;
+    int nb_packets_allocated_max;
+    
     uint64_t nb_packets_sent;
     size_t max_mtu_sent;
     size_t send_mtu;
@@ -1326,6 +1359,9 @@ typedef struct st_picoquic_multicast_channel_t {
     picoquic_packet_context_t pkt_ctx; /* Packet context */
     unsigned int key_phase : 1; /* Key phase used in outgoing packets */
     unsigned int current_spin : 1;
+
+    picoquic_multicast_packet_integrity_t* packet_integrity_first;
+    picoquic_multicast_packet_integrity_t* packet_integrity_last;
 
     /* Management of streams */
     picosplay_tree_t stream_tree;
@@ -1342,7 +1378,7 @@ typedef struct st_picoquic_multicast_channel_t {
 
     /* Management of datagram queue */
     unsigned int is_datagram_ready : 1; /* Active polling for datagrams */
-    picoquic_misc_frame_header_t* first_datagram;
+    picoquic_misc_frame_header_t* first_datagram; // CLEAN MC: Is first_datagram and last_datagram needed?
     picoquic_misc_frame_header_t* last_datagram;
     uint64_t datagram_priority;
     int datagram_conflicts_count;
@@ -1391,8 +1427,9 @@ typedef enum {
     picoquic_mc_state_error = 99
 } picoquic_mc_state_enum;
 
-typedef struct st_picoquic_mc_channel_in_cnx_t { // ENHANCE MC: Maybe add pointer back to cnx here for convenience?
+typedef struct st_picoquic_mc_channel_in_cnx_t {
     picoquic_multicast_channel_t* channel;
+    picoquic_cnx_t* cnx;
     picoquic_mc_state_enum state;
     int key_available;
     int state_frame_available;
@@ -1411,12 +1448,16 @@ typedef struct st_picoquic_mc_channel_in_cnx_t { // ENHANCE MC: Maybe add pointe
     int mc_join_acked;
     int mc_leave_acked;
     int mc_retire_acked;
-    int key_acked;                      // At least one MC_KEY frame was acked
+    int key_acked;                                              // At least one MC_KEY frame was acked
     uint64_t latest_key_sequence_acked;
-    uint64_t nb_packets_received;
-    uint64_t latest_receive_time;
+    int first_mc_integrity_sent;                                // sent at least one mc_integrity frame (needed bc the first packet no is 0)
+    uint64_t mc_integrity_latest_pn_sent;                       // latest *multicast* packet number for which an integrity hash was sent
+    picoquic_multicast_integrity_ack_t** integrity_frames_acked; // stores info, which MC_INTEGRITY frames were ACKed by client
+    size_t nb_integrity_frames_acked;
 
     // the following is used on client only:
+    uint64_t nb_packets_received;
+    uint64_t latest_receive_time;
     picoquic_mc_state_enum state_scheduled;
     picoquic_mc_state_frame_enum state_frame_scheduled;
     int state_reason_scheduled;         // reason code for scheduled state frame, could also be different from picoquic_mc_state_reason_enum choices
@@ -1425,6 +1466,8 @@ typedef struct st_picoquic_mc_channel_in_cnx_t { // ENHANCE MC: Maybe add pointe
     uint64_t latest_state_sequence_acked;
     uint64_t latest_limits_sequence_acked;
     uint64_t crypto_failure_count;
+    picoquic_multicast_packet_t* awaiting_integrity_check_first;
+    picoquic_multicast_packet_t* awaiting_integrity_check_last;
 } picoquic_mc_channel_in_cnx_t;
 
 uint8_t picoquic_spinbit_basic_multicast(picoquic_multicast_channel_t * channel);
@@ -2235,7 +2278,7 @@ int picoquic_queue_path_abandon_frame(picoquic_cnx_t* cnx,
     uint64_t unique_path_id, uint64_t reason);
 int picoquic_decode_frames_multicast(picoquic_mc_channel_in_cnx_t* ch_in_cnx, const uint8_t* bytes, size_t bytes_maxsize,
     picoquic_stream_data_node_t* received_data,
-    struct sockaddr* addr_from, struct sockaddr* addr_to, uint64_t pn64, uint64_t current_time);
+    uint64_t pn64, uint64_t current_time, int integrity_verified);
 int picoquic_decode_frames(picoquic_cnx_t* cnx, picoquic_path_t * path_x, const uint8_t* bytes, size_t bytes_max,
     picoquic_stream_data_node_t* received_data,
     int epoch, struct sockaddr* addr_from, struct sockaddr* addr_to, uint64_t pn64, int path_is_not_allocated, uint64_t current_time);
@@ -2253,6 +2296,9 @@ picoquic_mc_channel_in_cnx_t* picoquic_find_multicast_channel_in_cnx(picoquic_mu
     picoquic_cnx_t* cnx);
 picoquic_multicast_channel_t* picoquic_find_multicast_channel_global(picoquic_multicast_channel_id_t * ch_id, 
     picoquic_quic_t* quic);
+int picoquic_need_to_send_multicast_integrity(picoquic_quic_t* quic, 
+    uint64_t threshold, uint64_t current_time, int64_t* delta_t);
+
 picoquic_mc_channel_in_cnx_t* picoquic_add_channel_to_cnx(picoquic_cnx_t* cnx, 
     picoquic_multicast_channel_t* channel);
 uint8_t* picoquic_format_mc_announce_frame(uint8_t* bytes, uint8_t* bytes_max, 
@@ -2270,6 +2316,10 @@ const uint8_t* picoquic_skip_mc_join_frame(const uint8_t* bytes,
 uint8_t* picoquic_format_mc_state_frame(uint8_t* bytes, uint8_t* bytes_max, picoquic_mc_channel_in_cnx_t* channel, int * more_data, 
     picoquic_frame_type_enum_t ftype, picoquic_mc_state_frame_enum state, picoquic_mc_state_reason_enum reason);
 const uint8_t* picoquic_skip_mc_state_frame(const uint8_t* bytes, 
+    const uint8_t* bytes_max, uint64_t ftype);
+uint8_t* picoquic_format_mc_integrity_frame(uint8_t* bytes, 
+    uint8_t* bytes_max, picoquic_mc_channel_in_cnx_t* ch_in_cnx, int * more_data);
+const uint8_t* picoquic_skip_mc_integrity_frame(const uint8_t* bytes, 
     const uint8_t* bytes_max, uint64_t ftype);
 
 int picoquic_skip_frame(const uint8_t* bytes, size_t bytes_max, size_t* consumed, int* pure_ack);
