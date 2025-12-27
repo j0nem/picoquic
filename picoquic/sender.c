@@ -3205,13 +3205,39 @@ uint8_t * picoquic_prepare_multicast_init_frames(picoquic_cnx_t* cnx, picoquic_p
     return bytes;
 }
 
+/*
+ * Prepare MC_ACK frames
+ */
+uint8_t * picoquic_prepare_multicast_ack_frames(picoquic_cnx_t* cnx,
+    uint8_t * bytes, uint8_t * bytes_max, 
+    int * more_data, uint64_t current_time, int is_opportunistic)
+{
+    if (cnx->client_mode == 0 || cnx->mc_channels == NULL || cnx->nb_mc_channels == 0) {
+        return bytes;
+    }
+
+    for (int i = 0; i < cnx->nb_mc_channels; i++) {
+        picoquic_mc_channel_in_cnx_t* ch = cnx->mc_channels[i];
+
+        if (ch->state < picoquic_mc_state_leave_pending) {
+            fprintf(stdout, "Prepare MC_ACK frame\n");
+            uint8_t *bytes_next = picoquic_format_mc_ack_frame(ch, bytes, bytes_max, more_data, current_time, is_opportunistic);
+            if (bytes_next > bytes) {
+                bytes = bytes_next;            
+            }
+        }
+    }
+
+    return bytes;
+}
+
 /* 
  * Prepare MC_STATE frames to be sent back to the server from the client, when needed. 
  */
 uint8_t * picoquic_prepare_multicast_state_frames(picoquic_cnx_t* cnx,
     uint8_t * bytes, uint8_t * bytes_max, 
     int * more_data, int* is_pure_ack,
-    uint64_t current_time, uint64_t * next_wake_time)
+    uint64_t current_time)
 {
     if (cnx->mc_channels == NULL || cnx->nb_mc_channels == 0) {
         return bytes;
@@ -4010,6 +4036,8 @@ int picoquic_prepare_packet_ready(picoquic_cnx_t* cnx, picoquic_path_t* path_x, 
             bytes_next = picoquic_format_ack_frame(cnx, bytes + length, bytes_max, &more_data,
                 current_time, pc, !is_nominal_ack_path);
             length = bytes_next - bytes;
+
+            // TODO MC: Add MC_ACK frame here as well?
         }
         /* document the send time & overhead */
         is_pure_ack = 0;
@@ -4062,6 +4090,13 @@ int picoquic_prepare_packet_ready(picoquic_cnx_t* cnx, picoquic_path_t* path_x, 
                     bytes_next = picoquic_format_ack_frame(cnx, bytes_next, bytes_max, &more_data,
                         current_time, pc, !is_nominal_ack_path);
                     ack_sent = (bytes_next > bytes_ack);
+                }
+
+                if (picoquic_is_ack_needed_multicast(cnx, current_time, next_wake_time, !is_nominal_ack_path)) {
+                    uint8_t* bytes_mc_ack = bytes_next;
+                    bytes_next = picoquic_prepare_multicast_ack_frames(cnx, bytes_next, bytes_max, &more_data,
+                        current_time, !is_nominal_ack_path);
+                    ack_sent = ack_sent || (bytes_next > bytes_mc_ack);
                 }
 
                 /* if necessary, prepare the MAX STREAM frames */
@@ -4170,7 +4205,7 @@ int picoquic_prepare_packet_ready(picoquic_cnx_t* cnx, picoquic_path_t* path_x, 
                         /* CLIENT: Send MC_STATE frames to server if required. */
                         bytes_next = picoquic_prepare_multicast_state_frames(cnx,
                         bytes_next, bytes_max, &more_data, &is_pure_ack,
-                        current_time, next_wake_time);
+                        current_time);
                     }
 
                     if (length > header_length || pmtu_discovery_needed != picoquic_pmtu_discovery_required ||

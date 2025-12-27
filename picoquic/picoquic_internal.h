@@ -171,12 +171,14 @@ typedef enum {
     picoquic_frame_type_mc_announce_v6 = 0xff3e812,
     picoquic_frame_type_mc_key = 0xff3e801,
     picoquic_frame_type_mc_join = 0xff3e802,
-    picoquic_frame_type_mc_state_multicast = 0xff3e80b,
-    picoquic_frame_type_mc_state_application = 0xff3e80c,
+    picoquic_frame_type_mc_leave = 0xff3e803,
     picoquic_frame_type_mc_integrity = 0xff3e804,
     picoquic_frame_type_mc_integrity_l = 0xff3e805,
-    picoquic_frame_type_mc_leave = 0xff3e803,
+    picoquic_frame_type_mc_ack = 0xff3e806,
+    picoquic_frame_type_mc_ack_ecn = 0xff3e807,
     picoquic_frame_type_mc_retire = 0xff3e80a,
+    picoquic_frame_type_mc_state_multicast = 0xff3e80b,
+    picoquic_frame_type_mc_state_application = 0xff3e80c,
 } picoquic_frame_type_enum_t;
 
 /* PMTU discovery requirement status */
@@ -2321,6 +2323,11 @@ uint8_t* picoquic_format_mc_integrity_frame(uint8_t* bytes,
     uint8_t* bytes_max, picoquic_mc_channel_in_cnx_t* ch_in_cnx, int * more_data);
 const uint8_t* picoquic_skip_mc_integrity_frame(const uint8_t* bytes, 
     const uint8_t* bytes_max, uint64_t ftype);
+
+int picoquic_is_ack_needed_multicast(picoquic_cnx_t* cnx, uint64_t current_time, uint64_t* next_wake_time,
+    int is_opportunistic);
+uint8_t* picoquic_format_mc_ack_frame(picoquic_mc_channel_in_cnx_t* channel, uint8_t* bytes, uint8_t* bytes_max,
+    int* more_data, uint64_t current_time, int is_opportunistic);
 
 int picoquic_skip_frame(const uint8_t* bytes, size_t bytes_max, size_t* consumed, int* pure_ack);
 const uint8_t* picoquic_skip_path_abandon_frame(const uint8_t* bytes, const uint8_t* bytes_max);
