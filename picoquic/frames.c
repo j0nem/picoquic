@@ -7975,7 +7975,7 @@ const uint8_t* picoquic_decode_mc_integrity_frame(picoquic_cnx_t* cnx, const uin
         picoquic_multicast_packet_integrity_t* integrity = channel->packet_integrity_first;
 
         while (integrity != NULL) {
-            if (integrity->packet_number == packet->pn && packet->bytes == NULL && packet->length != 0) {
+            if (integrity->packet_number == packet->pn && packet->bytes != NULL && packet->length != 0) {
                 if (memcmp(packet->hash, integrity->hash, hash_length) != 0) {
                     fprintf(stdout, "Hash of packet number %lu could NOT be verified\n", packet->pn);
                     continue;
