@@ -309,6 +309,7 @@ int multicast_client_callback_multicast(picoquic_multicast_channel_t* channel,
                     }
                 }
 
+                // TODO MC: The delivery of DATAGRAM frames is not in order. Add logic to store fragment to disk in order
                 if (ret == 0 && length > 0)
                 {
                     fprintf(stdout, "GOT multicast datagram (fragment number: %lu, is_first: %i, is_last: %i) in application\n", fragment_number, is_first, is_last);
@@ -326,7 +327,7 @@ int multicast_client_callback_multicast(picoquic_multicast_channel_t* channel,
                     }
                 }
                 
-                // TODO MC: Figure out how to find the end of input for a file
+                // TODO MC: Not just close when receiving the final datagram, other packets with lower fragment number could arrive afterwards (unordered delivery)
                 if (ret == 0 && is_final_datagram == 1)
                 {
                     fprintf(stdout, "TRANSMISSION COMPLETE, CLOSING FILE\n");
