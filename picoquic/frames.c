@@ -3660,6 +3660,11 @@ int picoquic_check_frame_needs_repeat(picoquic_cnx_t* cnx, const uint8_t* bytes,
                 case picoquic_frame_type_mc_integrity_l:
                     ret = picoquic_check_mc_integrity_needs_repeat(cnx, bytes, p_bytes_max, frame_id64, no_need_to_repeat);
                     break;
+                case picoquic_frame_type_mc_ack:
+                case picoquic_frame_type_mc_ack_ecn:
+                    // CHECK MC: Do MC_ACK frames ever need repeat? (currently not, because no retransmissions are needed with only DATAGRAM frames supported in multicast channels)
+                    *no_need_to_repeat = 1;
+                    break;
                 default:
                     *no_need_to_repeat = 0;
                     break;
@@ -3833,6 +3838,10 @@ void picoquic_process_ack_of_frames(picoquic_cnx_t* cnx, picoquic_packet_t* p,
             ret = picoquic_process_ack_of_mc_integrity_frame(cnx, &p->bytes[byte_index], p->length - byte_index, ftype, &frame_length);
             byte_index += frame_length;
             break;
+        case picoquic_frame_type_mc_ack:
+        case picoquic_frame_type_mc_ack_ecn:
+            // TODO MC: Is it necessary to support ACK of MC_ACK frames?
+            // For now, ignore/do not support, as no retransmissions of MC_ACK frames are happening
         default:
             if (PICOQUIC_IN_RANGE(ftype, picoquic_frame_type_stream_range_min, picoquic_frame_type_stream_range_max)) {
                 ret = picoquic_process_ack_of_stream_frame(cnx, &p->bytes[byte_index], p->length - byte_index, &frame_length);
@@ -4418,7 +4427,7 @@ const uint8_t* picoquic_decode_connection_close_frame(picoquic_cnx_t* cnx, const
     else {
         picoquic_state_enum old_state = cnx->cnx_state;
         cnx->cnx_state = (cnx->cnx_state < picoquic_state_client_ready_start || cnx->crypto_context[picoquic_epoch_1rtt].aead_decrypt == NULL) ? picoquic_state_disconnected : picoquic_state_closing_received;
-        
+
         // TODO MC: What happens with active multicast channels when the unicast cnx is closed by remote?
 
         if (cnx->callback_fn != NULL && cnx->cnx_state != old_state && cnx->cnx_state == picoquic_state_disconnected) {
@@ -8419,7 +8428,7 @@ uint8_t* picoquic_format_mc_ack_frame(picoquic_mc_channel_in_cnx_t* channel, uin
     return bytes;
 }
 
-static const uint8_t* picoquic_skip_mc_ack_frame(const uint8_t* bytes, const uint8_t* bytes_max, int is_ecn)
+const uint8_t* picoquic_skip_mc_ack_frame(const uint8_t* bytes, const uint8_t* bytes_max, int is_ecn)
 {
     uint64_t nb_blocks;
     uint8_t ch_id_length = 0;
