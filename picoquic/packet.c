@@ -3041,7 +3041,7 @@ int picoquic_incoming_segment(
         } else if (mc_ch_in_cnx != NULL) {
             mc_ch_in_cnx->nb_packets_received++;
             mc_ch_in_cnx->latest_receive_time = current_time;
-            ret = picoquic_record_pn_received_multicast(mc_ch_in_cnx, ph.pn64, receive_time);
+            ret = picoquic_record_pn_received_multicast(mc_ch_in_cnx, phm.pn, receive_time);
         }
         if (cnx != NULL) {
             picoquic_reinsert_by_wake_time(cnx->quic, cnx, current_time);

@@ -8434,8 +8434,7 @@ const uint8_t* picoquic_skip_mc_ack_frame(const uint8_t* bytes, const uint8_t* b
     uint64_t nb_blocks;
     uint8_t ch_id_length = 0;
 
-    if ((bytes = picoquic_frames_varint_skip(bytes, bytes_max)) == NULL ||
-        (bytes = picoquic_frames_uint8_decode(bytes, bytes_max, &ch_id_length)) == NULL ||
+    if ((bytes = picoquic_frames_uint8_decode(bytes, bytes_max, &ch_id_length)) == NULL ||
         (bytes = picoquic_frames_fixed_skip(bytes, bytes_max, (uint64_t)ch_id_length)) == NULL) 
     {
         return NULL;

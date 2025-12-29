@@ -2325,6 +2325,8 @@ uint8_t* picoquic_format_mc_integrity_frame(uint8_t* bytes,
     uint8_t* bytes_max, picoquic_mc_channel_in_cnx_t* ch_in_cnx, int * more_data);
 const uint8_t* picoquic_skip_mc_integrity_frame(const uint8_t* bytes, 
     const uint8_t* bytes_max, uint64_t ftype);
+const uint8_t* picoquic_skip_mc_ack_frame(const uint8_t* bytes, 
+    const uint8_t* bytes_max, int is_ecn);
 
 int picoquic_is_ack_needed_multicast(picoquic_cnx_t* cnx, uint64_t current_time, uint64_t* next_wake_time,
     int is_opportunistic);
