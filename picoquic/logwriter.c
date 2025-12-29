@@ -580,6 +580,16 @@ static const uint8_t* picoquic_log_mc_integrity_frame(FILE* f, const uint8_t* by
     return bytes;
 }
 
+static const uint8_t* picoquic_log_mc_ack_frame(FILE* f, const uint8_t* bytes, const uint8_t* bytes_max, uint64_t ftype)
+{
+    const uint8_t* bytes_begin = bytes;
+    bytes = picoquic_log_varint_skip(bytes, bytes_max);
+    bytes = picoquic_skip_mc_ack_frame(bytes, bytes_max, ftype == picoquic_frame_type_mc_ack_ecn);
+    picoquic_binlog_frame(f, bytes_begin, bytes);
+
+    return bytes;
+}
+
 void picoquic_binlog_frames(FILE * f, const uint8_t* bytes, size_t length)
 {
     const uint8_t* bytes_max = bytes + length;
@@ -716,6 +726,10 @@ void picoquic_binlog_frames(FILE * f, const uint8_t* bytes, size_t length)
         case picoquic_frame_type_mc_integrity:
         case picoquic_frame_type_mc_integrity_l:
             bytes = picoquic_log_mc_integrity_frame(f, bytes, bytes_max, ftype);
+            break;
+        case picoquic_frame_type_mc_ack:
+        case picoquic_frame_type_mc_ack_ecn:
+            bytes = picoquic_log_mc_ack_frame(f, bytes, bytes_max, ftype);
             break;
         default:
             bytes = picoquic_log_erroring_frame(f, bytes, bytes_max);

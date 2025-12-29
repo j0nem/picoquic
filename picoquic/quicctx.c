@@ -1084,6 +1084,7 @@ picoquic_mc_channel_in_cnx_t* picoquic_add_channel_to_cnx(picoquic_cnx_t* cnx, p
 
     new_channel_in_cnx->channel = channel;
     new_channel_in_cnx->cnx = cnx;
+    picoquic_sack_list_init(&new_channel_in_cnx->ack_ctx.sack_list);
     cnx->mc_channels[cnx->nb_mc_channels] = new_channel_in_cnx;
     cnx->nb_mc_channels++;
 
@@ -5001,6 +5002,7 @@ int picoquic_connection_error_ex(picoquic_cnx_t* cnx, uint64_t local_error, uint
         cnx->local_error = local_error;
         cnx->local_error_reason = local_reason;
         cnx->cnx_state = picoquic_state_disconnecting;
+        // TODO MC: Set multicast joined state also to "leaving" or similar
     } else if (cnx->cnx_state < picoquic_state_server_false_start) {
         if (cnx->cnx_state != picoquic_state_handshake_failure &&
             cnx->cnx_state != picoquic_state_handshake_failure_resend) {
