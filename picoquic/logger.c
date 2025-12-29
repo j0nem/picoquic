@@ -367,6 +367,12 @@ char const* textlog_frame_names(uint64_t frame_type)
     case picoquic_frame_type_mc_integrity_l:
         frame_name = "mc_integrity_with_length";
         break;
+    case picoquic_frame_type_mc_ack:
+        frame_name = "mc_ack";
+        break;
+    case picoquic_frame_type_mc_ack_ecn:
+        frame_name = "mc_ack_with_ecn";
+        break;
     default:
         if (PICOQUIC_IN_RANGE(frame_type, picoquic_frame_type_stream_range_min, picoquic_frame_type_stream_range_max)) {
             frame_name = "stream";

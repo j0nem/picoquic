@@ -145,6 +145,10 @@ const char * ftype2str(picoquic_frame_type_enum_t ftype)
         return "mc_integrity_no_length";
     case picoquic_frame_type_mc_integrity_l:
         return "mc_integrity_with_length";
+    case picoquic_frame_type_mc_ack:
+        return "mc_ack";
+    case picoquic_frame_type_mc_ack_ecn:
+        return "mc_ack_with_ecn";
     default:
         return "unknown";
     }

@@ -1494,6 +1494,65 @@ void qlog_mc_integrity_frame(uint64_t ftype, FILE* f, bytestream* s)
     }
 }
 
+void qlog_mc_ack_frame(uint64_t ftype, FILE* f, bytestream* s)
+{
+    uint64_t channel_id_length = 0;
+    byteread_vint(s, &channel_id_length);
+    fprintf(f, ", \"channel_id_length\": %"PRIu64"", channel_id_length);
+
+    fprintf(f, ", \"channel_id\": \"");
+    for (uint64_t i = 0; i < channel_id_length; i++) {
+        uint8_t byte = 0;
+        byteread_int8(s, &byte);
+        if (i == 0) {
+            fprintf(f, "%02X", byte);
+        } else {
+            fprintf(f, " %02X", byte);
+        }
+    }
+    fprintf(f, "\"");
+
+    uint64_t largest = 0;
+    uint64_t ack_delay = 0;
+    uint64_t num = 0;
+    byteread_vint(s, &largest);
+    fprintf(f, ", \"largest_acknowledged\": %"PRIu64"", largest);
+    byteread_vint(s, &ack_delay);
+    fprintf(f, ", \"ack_delay\": %"PRIu64"", ack_delay);
+    byteread_vint(s, &num);
+    fprintf(f, ", \"acked_ranges\": [");
+    for (uint64_t i = 0; i <= num; i++) {
+        uint64_t skip = 0;
+        int64_t start_range;
+        int64_t end_range;
+
+        if (i != 0) {
+            byteread_vint(s, &skip);
+            skip++;
+
+            largest -= skip;
+            fprintf(f, ", ");
+        }
+        uint64_t range = 0;
+        byteread_vint(s, &range);
+
+        start_range = largest - range;
+        end_range = (int64_t)largest;
+        fprintf(f, "[%"PRId64", %"PRId64"]", start_range, end_range);
+
+        largest -= range + 1;
+    }
+    fprintf(f, "]");
+    if (ftype == picoquic_frame_type_mc_ack_ecn) {
+        char const* ecn_name[3] = { "ect0", "ect1", "ce" };
+        for (int ecnx = 0; ecnx < 3; ecnx++) {
+            uint64_t ecn_v = 0;
+            byteread_vint(s, &ecn_v);
+            fprintf(f, ", \"%s\": %"PRIu64, ecn_name[ecnx], ecn_v);
+        }
+    }
+}
+
 void qlog_observed_address_frame(uint64_t ftype, FILE* f, bytestream* s)
 {
     unsigned int port = 0;
@@ -1691,6 +1750,10 @@ int qlog_packet_frame(bytestream * s, void * ptr)
     case picoquic_frame_type_mc_integrity:
     case picoquic_frame_type_mc_integrity_l:
         qlog_mc_integrity_frame(ftype, f, s);
+        break;
+    case picoquic_frame_type_mc_ack:
+    case picoquic_frame_type_mc_ack_ecn:
+        qlog_mc_ack_frame(ftype, f, s);
         break;
     default:
         s->ptr = ptr_before_type;
