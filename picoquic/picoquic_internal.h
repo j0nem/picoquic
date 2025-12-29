@@ -2022,6 +2022,8 @@ int picoquic_is_pn_already_received(picoquic_cnx_t* cnx, picoquic_packet_context
     picoquic_local_cnxid_t * l_cid, uint64_t pn64);
 int picoquic_record_pn_received(picoquic_cnx_t* cnx, picoquic_packet_context_enum pc,
     picoquic_local_cnxid_t* l_cid, uint64_t pn64, uint64_t current_microsec);
+int picoquic_record_pn_received_multicast(picoquic_mc_channel_in_cnx_t* channel,
+    uint64_t pn64, uint64_t current_microsec);
 
 void picoquic_sack_select_ack_ranges(picoquic_sack_list_t* sack_list, picoquic_sack_item_t* first_sack,
     int max_ranges, int is_opportunistic, int* nb_sent_max, int* nb_sent_max_skip);

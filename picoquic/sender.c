@@ -3220,7 +3220,6 @@ uint8_t * picoquic_prepare_multicast_ack_frames(picoquic_cnx_t* cnx,
         picoquic_mc_channel_in_cnx_t* ch = cnx->mc_channels[i];
 
         if (ch->state < picoquic_mc_state_leave_pending) {
-            fprintf(stdout, "Prepare MC_ACK frame\n");
             uint8_t *bytes_next = picoquic_format_mc_ack_frame(ch, bytes, bytes_max, more_data, current_time, is_opportunistic);
             if (bytes_next > bytes) {
                 bytes = bytes_next;            

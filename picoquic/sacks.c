@@ -314,6 +314,43 @@ int picoquic_record_pn_received(picoquic_cnx_t* cnx,
     return ret;
 }
 
+int picoquic_record_pn_received_multicast(picoquic_mc_channel_in_cnx_t* channel,
+    uint64_t pn64, uint64_t current_microsec)
+{
+    int ret = 0;
+    picoquic_ack_context_t* ack_ctx = &channel->ack_ctx;
+    picoquic_sack_list_t* sack_list = &ack_ctx->sack_list;
+
+    if (sack_list != NULL) {
+        if (picoquic_sack_list_is_empty(sack_list)) {
+            /* This is the first packet ever received.. */
+            ack_ctx->time_stamp_largest_received = current_microsec;
+        }
+        else {
+            uint64_t pn_last = picoquic_sack_list_last(sack_list);
+            if (pn64 > pn_last) {
+                if (pn64 > pn_last + 1) {
+                    ack_ctx->act[0].out_of_order_received = 1;
+                    ack_ctx->act[1].out_of_order_received = 1;
+                }
+                ack_ctx->time_stamp_largest_received = current_microsec;
+            }
+            else
+            {
+                if (ack_ctx->act[0].ack_needed && pn64 < ack_ctx->act[0].highest_ack_sent) {
+                    ack_ctx->act[0].out_of_order_received = 1;
+                }
+                if (ack_ctx->act[1].ack_needed && pn64 < ack_ctx->act[1].highest_ack_sent) {
+                    ack_ctx->act[1].out_of_order_received = 1;
+                }
+            }
+        }
+
+        ret = picoquic_update_sack_list(sack_list, pn64, pn64, current_microsec);
+    }
+    return ret;
+}
+
 /* Compute the parameters of the ACK transmission.
  * We assume that there is space for up to N ranges, in addition to
  * the topmost one. We want to select the "most urgent" ones.
