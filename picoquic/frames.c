@@ -8034,7 +8034,8 @@ const uint8_t* picoquic_skip_mc_integrity_frame(const uint8_t* bytes, const uint
 
     // picoquic_frame_type_mc_integrity indicates that frame is extended until packet bounds
     if (picoquic_frame_type_mc_integrity) {
-        return bytes_max;
+        bytes = bytes_max;
+        return bytes;
     }
 
     uint8_t ch_id_length = 0;
