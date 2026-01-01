@@ -252,12 +252,6 @@ int picoquic_multicast_sender_start(multicast_sender_ctx_t* sender_ctx) {
 
     ret = multicast_sender_init(sender_ctx, server_ctx->mc_channel);
 
-    /* Initialize the callback context */
-    char text1[256];
-    printf("Prepare multicast sending for group ip %s\n", 
-        picoquic_addr_text((struct sockaddr*)&server_ctx->mc_channel->group_ip, text1, sizeof(text1))
-    );
-
     /* Set the params for this thread */
     param.multicast_channel = server_ctx->mc_channel;
     param.local_port = server_ctx->sender_port;

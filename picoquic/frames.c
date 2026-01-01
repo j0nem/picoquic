@@ -8465,6 +8465,51 @@ const uint8_t* picoquic_skip_mc_ack_frame(const uint8_t* bytes, const uint8_t* b
     return bytes;
 }
 
+const uint8_t* picoquic_decode_mc_ack_frame(picoquic_cnx_t* cnx, const uint8_t* bytes, const uint8_t* bytes_max, uint64_t ftype)
+{
+    if (!cnx->is_multicast_enabled || cnx->client_mode) {
+        picoquic_connection_error_ex(cnx, PICOQUIC_TRANSPORT_FRAME_FORMAT_ERROR, ftype, "received unexpected MC_ACK frame");
+        return NULL;
+    }
+
+    uint8_t channel_id_len;
+    picoquic_multicast_channel_id_t channel_id;
+    const uint8_t* bytes0 = bytes;
+
+    // Channel ID Length
+    if ((bytes = picoquic_frames_uint8_decode(bytes, bytes_max, &channel_id_len)) == NULL) {
+        return NULL;
+    }
+
+    // Channel ID
+    uint8_t bytes_copied = picoquic_parse_multicast_channel_id(bytes, channel_id_len, &channel_id);
+    if (bytes_copied == 0) {
+        return NULL;
+    } else {
+        bytes += bytes_copied;
+    }
+
+    picoquic_mc_channel_in_cnx_t* channel_found = picoquic_find_multicast_channel_in_cnx(&channel_id, cnx);
+    
+    if (channel_found == NULL) {
+        picoquic_connection_error_ex(cnx, PICOQUIC_TRANSPORT_FRAME_FORMAT_ERROR, ftype, "received MC_ACK frame for unjoined client");
+        // TODO MC: Send MC_LEAVE to client?
+        return NULL;
+    }
+
+    // Set state to "connection confirmed" if not already in later state
+    if (channel_found->state >= picoquic_mc_state_join_attempted && channel_found->state < picoquic_mc_state_join_confirmed) {
+        channel_found->state = picoquic_mc_state_join_confirmed;
+        if (cnx->callback_fn != NULL) {
+            cnx->callback_fn(cnx, 0, NULL, 0, picoquic_callback_multicast_join_confirmed, cnx->callback_ctx, &channel_found->channel->channel_id);
+        }
+    }
+
+    // ENHANCE MC: Properly decode rest of the frame to get information about acked packets
+
+    return picoquic_skip_mc_ack_frame(bytes0, bytes_max, ftype == picoquic_frame_type_ack_ecn);
+}
+
 /* BDP frames as defined in https://tools.ietf.org/html/draft-kuhn-quic-0rtt-bdp-09
 */
 
@@ -9155,12 +9200,10 @@ int picoquic_decode_frames(picoquic_cnx_t* cnx, picoquic_path_t * path_x, const 
                             break;
                         case picoquic_frame_type_mc_ack:
                         case picoquic_frame_type_mc_ack_ecn:
-                            fprintf(stdout, "DETECTED MC_ACK frame\n");
-                            bytes = picoquic_skip_mc_ack_frame(bytes, bytes_max, frame_id64 == picoquic_frame_type_mc_ack_ecn);
-                            // ENHANCE MC: Decode MC_ACK frame properly and use info for retransmissions when STREAM or other frames are supported in multicast channels
+                            fprintf(stdout, "Got MC_ACK frame\n");
+                            bytes = picoquic_decode_mc_ack_frame(cnx, bytes, bytes_max, frame_id64);
                             break;
                         default:
-                            fprintf(stdout, "DETECTED unknown frame: %lx\n", frame_id64);
                             /* Not implemented yet! */
                             picoquic_connection_error(cnx, PICOQUIC_TRANSPORT_FRAME_FORMAT_ERROR, frame_id64);
                             bytes = NULL;
