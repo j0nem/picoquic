@@ -403,7 +403,7 @@ endif()
 
 if (BUILD_MULTICAST)
     find_library(LIBMCRX_LIBRARY NAMES libmcrx.a PATHS /usr/lib /usr/local/lib)
-    find_path(LIBMCRX_INCLUDE_DIR NAMES libmcrx.h PATHS /usr/include /usr/local/include)
+    find_path(LIBMCRX_INCLUDE_DIR NAMES libmcrx.h PATHS /usr/include /usr/include/mcrx /usr/local/include)
     add_executable(multicast
         multicast_sample/multicast.c
         multicast_sample/multicast_server.c
