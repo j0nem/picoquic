@@ -95,6 +95,8 @@ void multicast_server_process_client_left_or_retired(multicast_server_cnx_ctx_t*
         server_ctx->nb_joined_clients--;
     }
 
+    fprintf(stdout, "Kick out client, joined clients new: %i, active clients new: %i\n", server_ctx->nb_joined_clients, server_ctx->nb_active_clients);
+
     free(server_cnx_ctx);
     picoquic_set_callback(cnx, NULL, NULL);
     
@@ -196,11 +198,14 @@ int multicast_server_callback(picoquic_cnx_t *cnx,
                 }
             }
             break;
-        case picoquic_callback_multicast_join_confirmed: 
-            // TODO MC: currently not implemented (when MC_ACK is received)
-            server_cnx_ctx->is_active = 1;
-            server_ctx->nb_active_clients++;
-            fprintf(stdout, "Callback picoquic_callback_multicast_join_confirmed, active clients new: %i\n", server_ctx->nb_active_clients);
+        case picoquic_callback_multicast_join_confirmed:
+            if (server_cnx_ctx->is_joined) {
+                server_cnx_ctx->is_active = 1;
+                server_ctx->nb_active_clients++;    
+                fprintf(stdout, "Callback picoquic_callback_multicast_join_confirmed, active clients new: %i\n", server_ctx->nb_active_clients);
+            } else {
+                fprintf(stdout, "Callback picoquic_callback_multicast_join_confirmed, client not joined anymore\n");
+            }
             break;
         case picoquic_callback_multicast_left:
         case picoquic_callback_multicast_retired:
