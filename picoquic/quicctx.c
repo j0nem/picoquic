@@ -1187,6 +1187,47 @@ int picoquic_join_mc_channel(picoquic_cnx_t* cnx, picoquic_multicast_channel_id_
     return 0;
 }
 
+// Schedule MC_LEAVE and MC_RETIRE frames for sending to clients implicitly by setting flags in ch_in_cnx
+int picoquic_schedule_mc_leave_and_retire(picoquic_multicast_channel_t* channel) 
+{
+    for (int i = 0; i < channel->nb_used_in_cnx; i++) {
+        picoquic_mc_channel_in_cnx_t* ch = channel->used_in_cnx[i];
+        ch->mc_leave_scheduled = 1;
+        ch->mc_retire_scheduled = 1;
+    }
+    channel->is_retiring = 1;
+
+    return 0;
+}
+
+// Schedule MC_LEAVE frame for sending to clients implicitly by setting flag in ch_in_cnx
+int picoquic_schedule_mc_leave(picoquic_multicast_channel_t* channel, picoquic_cnx_t* cnx) 
+{
+    picoquic_mc_channel_in_cnx_t* found_channel_cnx = picoquic_find_multicast_channel_in_cnx(&channel->channel_id, cnx);
+    if (found_channel_cnx == NULL) {
+        return -1;
+    }
+    found_channel_cnx->mc_leave_scheduled = 1;
+
+    return 0;
+}
+
+// Schedule MC_RETIRE frame for sending to clients implicitly by setting flag in ch_in_cnx
+int picoquic_schedule_mc_retire(picoquic_multicast_channel_t* channel, picoquic_cnx_t* cnx) 
+{
+    picoquic_mc_channel_in_cnx_t* found_channel_cnx = picoquic_find_multicast_channel_in_cnx(&channel->channel_id, cnx);
+    if (found_channel_cnx == NULL) {
+        return -1;
+    }
+    found_channel_cnx->mc_retire_scheduled = 1;
+
+    if (!found_channel_cnx->channel->is_retiring) {
+        found_channel_cnx->channel->is_retiring = 1;
+    }
+
+    return 0;
+}
+
 void picoquic_set_default_address_discovery_mode(picoquic_quic_t* quic, int mode)
 {
     if (mode > 0 && mode <= 3) {

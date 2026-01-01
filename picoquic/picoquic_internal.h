@@ -1331,7 +1331,8 @@ typedef struct st_picoquic_multicast_channel_t {
     char hash_algorithm_name[7];
     uint64_t max_rate; // max rate in kibps for this channel
     uint64_t max_ack_delay;
-    int is_retired;
+    int is_retiring; // Retiring was requested (e.g. by application), but not all joined clients accepted retiration yet
+    int is_retired; // All clients left the channel and it can safely be deleted
 
     // points to cnx where this channel was added to, may not yet joined or already left/retired
     picoquic_mc_channel_in_cnx_t** used_in_cnx;
@@ -1451,6 +1452,8 @@ typedef struct st_picoquic_mc_channel_in_cnx_t {
     int mc_leave_acked;
     int mc_retire_acked;
     int key_acked;                                              // At least one MC_KEY frame was acked
+    int mc_leave_scheduled;
+    int mc_retire_scheduled;
     uint64_t latest_key_sequence_acked;
     int first_mc_integrity_sent;                                // sent at least one mc_integrity frame (needed bc the first packet no is 0)
     uint64_t mc_integrity_latest_pn_sent;                       // latest *multicast* packet number for which an integrity hash was sent

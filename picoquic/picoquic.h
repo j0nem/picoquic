@@ -338,6 +338,7 @@ typedef enum {
     picoquic_callback_multicast_join_attempted, /* (server event) Multicast client sent MC_STATUS(Joined) */
     picoquic_callback_multicast_join_confirmed, /* (server event) Multicast client sent MC_ACK for first time */
     picoquic_callback_multicast_left, /* (server event) Multicast client sent MC_STATUS(Declined Join) or MC_STATUS(Left) */
+    picoquic_callback_multicast_retired, /* (server event) Multicast client sent MC_STATUS(Retired) */
     picoquic_callback_multicast_stream_data, /* (client event) Stream frame has been received over multicast */
     picoquic_callback_multicast_datagram, /* (client event) Datagram frame has been received over multicast */
 } picoquic_call_back_event_t;
@@ -749,6 +750,15 @@ int picoquic_schedule_mc_announce_and_join(picoquic_cnx_t* cnx, picoquic_multica
 
 /* Send MC_STATE(Joined) to server */
 int picoquic_join_mc_channel(picoquic_cnx_t* cnx, picoquic_multicast_channel_id_t* ch_id);
+
+/* Queue MC_LEAVE and MC_RETIRE frame to sending it to all clients */
+int picoquic_schedule_mc_leave_and_retire(picoquic_multicast_channel_t* channel);
+
+/* Queue MC_LEAVE frame to sending it to a specific clients */
+int picoquic_schedule_mc_leave(picoquic_multicast_channel_t* channel, picoquic_cnx_t* cnx);
+
+/* Queue MC_RETIRE frame to sending it to a specific clients */
+int picoquic_schedule_mc_retire(picoquic_multicast_channel_t* channel, picoquic_cnx_t* cnx);
 
 /* Set the Address Discovery mode for the context */
 void picoquic_set_default_address_discovery_mode(picoquic_quic_t* quic, int mode);
