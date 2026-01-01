@@ -1,37 +1,28 @@
-/*
- * Author: Christian Huitema
- * Copyright (c) 2020, Private Octopus, Inc.
- * All rights reserved.
- *
- * Permission to use, copy, modify, and distribute this software for any
- * purpose with or without fee is hereby granted, provided that the above
- * copyright notice and this permission notice appear in all copies.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL Private Octopus, Inc. BE LIABLE FOR ANY
- * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
- * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- */
-
-/* The "multicast" project builds a simple file transfer program that can be
- * instantiated in client or server mode. The "multicast_server" implements
+/* The "multicast" project builds a simple multicast application that can be
+ * instantiated in client or server mode. The "multicast_server" and "multicast_sender" implements
  * the server components of the multicast application.
  *
- * Developing the server requires two main components:
- *  - the server "callback" that implements the server side of the
- *    application protocol, managing a server side application context
- *    for each connection.
- *  - the server loop, that reads messages on the socket, submits them
- *    to the Quic context, let the server prepare messages, and send
- *    them on the appropriate socket.
+ * The server currently works using two components:
+ * 
+ *  - the multicast control server (multicast_server.c) records the multicast channel state
+ *    of the clients (joined/left) and handles the lifecycle of the multicast sender (start, stop).
+ *    It is started directly when "multicast server <params>" is executed, initializes picoquic,
+ *    sets the picoquic callbacks for client interaction and starts the packet loop.
  *
- * The Multicast Server uses the "qlog" option to produce Quic Logs as defined
+ *  - the multicast sender (multicast_sender.c) runs in a separate thread within the server application
+ *    and is started by the control server, once a specified threshold of clients is reached 
+ *    (clients_threshold CLI parameter). The sender runs with the same quic context as the control 
+ *    server and "stupidly" sends out data from a file specified by the control server via a special 
+ *    send-only packet loop. Once the sender is finished with sending the file, it calls a specified 
+ *    callback in the control server. The control server then invokes retiring of all clients for that 
+ *    multicast chanenl and stops the sender thread.
+ * 
+ * The multicast sender currently only sends out DATAGRAM frames contining the specified file,
+ * where each DATAGRAM frame contains a small custom application header defining a "fragment number"
+ * (so that the clients can rearrange the DATAGRAM frames into the correct order again) and an indicator
+ * if this is the first or the last fragment of the sent file.
+ *
+ * The multicast server uses the "qlog" option to produce Quic Logs as defined
  * in https://datatracker.ietf.org/doc/draft-marx-qlog-event-definitions-quic-h3/.
  * This is an optional feature, which requires linking with the "loglib" library,
  * and using the picoquic_set_qlog() API defined in "autoqlog.h". . When a connection
@@ -49,197 +40,86 @@
 #include "picoquic_multicast.h"
 #include "picoquic_packet_loop.h"
 
-/* Server context and callback management:
- *
- * The server side application context is created for each new connection,
- * and is freed when the connection is closed. It contains a list of
- * server side stream contexts, one for each stream open on the
- * connection. Each stream context includes:
- *  - description of the stream state:
- *      name_read or not, FILE open or not, stream reset or not,
- *      stream finished or not.
- *  - the number of file name bytes already read.
- *  - the name of the file requested by the client.
- *  - the FILE pointer for reading the data.
- * Server side stream context is created when the client starts the
- * stream. It is closed when the file transmission
- * is finished, or when the stream is abandoned.
- *
+typedef struct st_multicast_server_cnx_ctx_t
+{
+    multicast_server_ctx_t* global_ctx;
+    int is_joined;
+    int is_active;
+} multicast_server_cnx_ctx_t;
+
+/* Delete sender context */
+void multicast_server_delete_sender_context(multicast_sender_ctx_t *sender_ctx)
+{
+    picoquic_delete_network_thread(sender_ctx->thread_ctx);
+    sender_ctx->thread_ctx = NULL;
+
+    /* free the sender application context */
+    if (sender_ctx->F != NULL) {
+        (void)picoquic_file_close(sender_ctx->F);
+    }
+}
+
+/* Server proactively removes a specific client from channel */
+// CHECK MC: Currently, this is not used, and also not needed in the example application,
+// as all clients are removed at once after the file transfer is finished using picoquic_schedule_mc_leave_and_retire
+void multicast_server_remove_client_from_channel(multicast_server_cnx_ctx_t* server_cnx_ctx, picoquic_cnx_t* cnx) {
+    multicast_server_ctx_t* server_ctx = server_cnx_ctx->global_ctx;
+
+    if (server_cnx_ctx == NULL || server_ctx == NULL) {
+        // error
+        fprintf(stderr, "Error: Client could not be removed from channel\n");
+        return;
+    }
+
+    if (server_ctx->nb_joined_clients > 0) {
+        picoquic_schedule_mc_leave(server_ctx->mc_channel, cnx);
+    } else {
+        picoquic_schedule_mc_retire(server_ctx->mc_channel, cnx);
+    }
+    if (server_cnx_ctx->is_active) {
+        server_cnx_ctx->is_active = 0;
+        server_ctx->nb_active_clients--;
+    }
+}
+
+/* Handle STATE(LEFT) or STATE(RETIRED) from client */
+void multicast_server_process_client_left_or_retired(multicast_server_cnx_ctx_t* server_cnx_ctx, picoquic_cnx_t* cnx) {
+    multicast_server_ctx_t* server_ctx = server_cnx_ctx->global_ctx;
+
+    if (server_cnx_ctx->is_active) {
+        server_cnx_ctx->is_active = 0;
+        server_ctx->nb_active_clients--;
+    }
+    if (server_cnx_ctx->is_joined) {
+        server_cnx_ctx->is_joined = 0;
+        server_ctx->nb_joined_clients--;
+    }
+
+    free(server_cnx_ctx);
+    picoquic_set_callback(cnx, NULL, NULL);
+    
+    // Stop multicast sender if all clients are already left
+    if (server_ctx != NULL && server_ctx->nb_joined_clients == 0 && server_ctx->mc_channel->is_retired) {
+        server_ctx->is_closing = 1;
+    }
+}
+
+/*
  * The server side callback is a large switch statement, with one entry
  * for each of the call back events.
  */
-
-typedef struct st_multicast_server_datagram_ctx_t
-{
-    struct st_multicast_server_datagram_ctx_t *next_datagram;
-    struct st_multicast_server_datagram_ctx_t *previous_datagram;
-    uint64_t datagram_id;
-    FILE *F;
-    uint8_t file_name[256];
-    size_t name_length;
-    size_t file_length;
-    size_t file_sent;
-    unsigned int is_name_read : 1;
-    unsigned int is_datagram_reset : 1;
-    unsigned int is_datagram_finished : 1;
-} multicast_server_datagram_ctx_t;
-
-typedef struct st_multicast_server_ctx_t
-{
-    char const *served_file;
-    size_t served_file_len;
-    multicast_server_datagram_ctx_t *first_datagram;
-    multicast_server_datagram_ctx_t *last_datagram;
-    picoquic_multicast_channel_t *mc_channel;
-    // ENHANCE MC Maybe: save cnx pointers instead of, to really identify clients
-    int joined_clients;
-    int active_clients; 
-    picoquic_network_thread_ctx_t* sender_thread_ctx;
-    multicast_sender_ctx_t sender_app_ctx;
-    int sender_running;
-    const char *server_cert; 
-    const char *server_key;
-    int sender_port;
-} multicast_server_ctx_t;
-
-multicast_server_datagram_ctx_t *multicast_server_create_datagram_context(multicast_server_ctx_t *server_ctx, uint64_t datagram_id)
-{
-    multicast_server_datagram_ctx_t *datagram_ctx = (multicast_server_datagram_ctx_t *)malloc(sizeof(multicast_server_datagram_ctx_t));
-
-    if (datagram_ctx != NULL)
-    {
-        memset(datagram_ctx, 0, sizeof(multicast_server_datagram_ctx_t));
-
-        if (server_ctx->last_datagram == NULL)
-        {
-            server_ctx->last_datagram = datagram_ctx;
-            server_ctx->first_datagram = datagram_ctx;
-        }
-        else
-        {
-            datagram_ctx->previous_datagram = server_ctx->last_datagram;
-            server_ctx->last_datagram->next_datagram = datagram_ctx;
-            server_ctx->last_datagram = datagram_ctx;
-        }
-        datagram_ctx->datagram_id = datagram_id;
-    }
-
-    return datagram_ctx;
-}
-
-int multicast_server_open_file(multicast_server_ctx_t *server_ctx, multicast_server_datagram_ctx_t *datagram_ctx)
-{
-    int ret = 0;
-    char file_path[1024];
-
-    /* Keep track that the full file name was acquired. */
-    datagram_ctx->is_name_read = 1;
-
-    /* Verify the name, then try to open the file */
-    if (server_ctx->served_file_len + 1 > sizeof(file_path))
-    {
-        ret = PICOQUIC_MULTICAST_NAME_TOO_LONG_ERROR;
-    }
-    else
-    {
-        size_t path_len = server_ctx->served_file_len;
-        if (path_len > 0)
-        {
-            memcpy(file_path, server_ctx->served_file, path_len);
-        }
-        file_path[path_len] = 0;
-
-        /* Use the picoquic_file_open API for portability to Windows and Linux */
-        datagram_ctx->F = picoquic_file_open(file_path, "rb");
-
-        if (datagram_ctx->F == NULL)
-        {
-            ret = PICOQUIC_MULTICAST_NO_SUCH_FILE_ERROR;
-        }
-        else
-        {
-            /* Assess the file size, as this is useful for data planning */
-            long sz;
-            fseek(datagram_ctx->F, 0, SEEK_END);
-            sz = ftell(datagram_ctx->F);
-
-            if (sz <= 0)
-            {
-                datagram_ctx->F = picoquic_file_close(datagram_ctx->F);
-                ret = PICOQUIC_MULTICAST_FILE_READ_ERROR;
-            }
-            else
-            {
-                datagram_ctx->file_length = (size_t)sz;
-                fseek(datagram_ctx->F, 0, SEEK_SET);
-                ret = 0;
-            }
-        }
-    }
-
-    return ret;
-}
-
-void multicast_server_delete_stream_context(multicast_server_ctx_t *server_ctx, multicast_server_datagram_ctx_t *datagram_ctx)
-{
-    /* Close the file if it was open */
-    if (datagram_ctx->F != NULL)
-    {
-        datagram_ctx->F = picoquic_file_close(datagram_ctx->F);
-    }
-
-    /* Remove the context from the server's list */
-    if (datagram_ctx->previous_datagram == NULL)
-    {
-        server_ctx->first_datagram = datagram_ctx->next_datagram;
-    }
-    else
-    {
-        datagram_ctx->previous_datagram->next_datagram = datagram_ctx->next_datagram;
-    }
-
-    if (datagram_ctx->next_datagram == NULL)
-    {
-        server_ctx->last_datagram = datagram_ctx->previous_datagram;
-    }
-    else
-    {
-        datagram_ctx->next_datagram->previous_datagram = datagram_ctx->previous_datagram;
-    }
-
-    /* release the memory */
-    free(datagram_ctx);
-}
-
-void multicast_server_delete_context(multicast_server_ctx_t *server_ctx)
-{
-    /* Delete any remaining stream context */
-    while (server_ctx->first_datagram != NULL)
-    {
-        multicast_server_delete_stream_context(server_ctx, server_ctx->first_datagram);
-    }
-
-    /* release the memory */
-    free(server_ctx);
-}
-
 int multicast_server_callback(picoquic_cnx_t *cnx,
                               uint64_t stream_id, uint8_t *bytes, size_t length,
                               picoquic_call_back_event_t fin_or_event, void *callback_ctx, void *v_stream_ctx)
 {
     int ret = 0;
-    multicast_server_ctx_t *server_ctx = (multicast_server_ctx_t *)callback_ctx;
-    // CHECK MC: Use datagram context?
-    // multicast_server_datagram_ctx_t *datagram_ctx = (multicast_server_datagram_ctx_t *)v_stream_ctx;
-
-    /* If this is the first reference to the connection, the application context is set
-     * to the default value defined for the server. This default value contains the pointer
-     * to the file directory in which all files are defined.
-     */
+    multicast_server_cnx_ctx_t *server_cnx_ctx = (multicast_server_cnx_ctx_t *)callback_ctx;
+    multicast_server_ctx_t *server_ctx = server_cnx_ctx->global_ctx;
+    
     if (callback_ctx == NULL || callback_ctx == picoquic_get_default_callback_context(picoquic_get_quic_ctx(cnx)))
     {
-        server_ctx = (multicast_server_ctx_t *)malloc(sizeof(multicast_server_ctx_t));
-        if (server_ctx == NULL)
+        server_cnx_ctx = (multicast_server_cnx_ctx_t *)malloc(sizeof(multicast_server_cnx_ctx_t));
+        if (server_cnx_ctx == NULL)
         {
             /* cannot handle the connection */
             picoquic_close(cnx, PICOQUIC_ERROR_MEMORY);
@@ -247,18 +127,17 @@ int multicast_server_callback(picoquic_cnx_t *cnx,
         }
         else
         {
-            multicast_server_ctx_t *d_ctx = (multicast_server_ctx_t *)picoquic_get_default_callback_context(picoquic_get_quic_ctx(cnx));
+            multicast_server_cnx_ctx_t *d_ctx = (multicast_server_cnx_ctx_t *)picoquic_get_default_callback_context(picoquic_get_quic_ctx(cnx));
             if (d_ctx != NULL)
             {
-                memcpy(server_ctx, d_ctx, sizeof(multicast_server_ctx_t));
+                memcpy(server_cnx_ctx, d_ctx, sizeof(multicast_server_cnx_ctx_t));
             }
             else
             {
                 /* This really is an error case: the default connection context should never be NULL */
-                memset(server_ctx, 0, sizeof(multicast_server_ctx_t));
-                server_ctx->served_file = "";
+                memset(server_cnx_ctx, 0, sizeof(multicast_server_cnx_ctx_t));
             }
-            picoquic_set_callback(cnx, multicast_server_callback, server_ctx);
+            picoquic_set_callback(cnx, multicast_server_callback, server_cnx_ctx);
         }
     }
 
@@ -268,136 +147,23 @@ int multicast_server_callback(picoquic_cnx_t *cnx,
         {
         case picoquic_callback_stream_data:
         case picoquic_callback_stream_fin:
-            // /* Data arrival on stream #x, maybe with fin mark */
-            // if (stream_ctx == NULL)
-            // {
-            //     /* Create and initialize stream context */
-            //     stream_ctx = multicast_server_create_stream_context(server_ctx, stream_id);
-            //     if (picoquic_set_app_stream_ctx(cnx, stream_id, stream_ctx) != 0)
-            //     {
-            //         /* Internal error */
-            //         (void)picoquic_reset_stream(cnx, stream_id, PICOQUIC_MULTICAST_INTERNAL_ERROR);
-            //         return (-1);
-            //     }
-            // }
-
-            // if (stream_ctx == NULL)
-            // {
-            //     /* Internal error */
-            //     (void)picoquic_reset_stream(cnx, stream_id, PICOQUIC_MULTICAST_INTERNAL_ERROR);
-            //     return (-1);
-            // }
-            // else if (stream_ctx->is_name_read)
-            // {
-            //     /* Write after fin? */
-            //     return (-1);
-            // }
-            // else
-            // {
-            //     /* Accumulate data */
-            //     size_t available = sizeof(stream_ctx->file_name) - stream_ctx->name_length - 1;
-
-            //     if (length > available)
-            //     {
-            //         /* Name too long: reset stream! */
-            //         multicast_server_delete_stream_context(server_ctx, stream_ctx);
-            //         (void)picoquic_reset_stream(cnx, stream_id, PICOQUIC_MULTICAST_NAME_TOO_LONG_ERROR);
-            //     }
-            //     else
-            //     {
-            //         if (length > 0)
-            //         {
-            //             memcpy(stream_ctx->file_name + stream_ctx->name_length, bytes, length);
-            //             stream_ctx->name_length += length;
-            //         }
-            //         if (fin_or_event == picoquic_callback_stream_fin)
-            //         {
-            //             int stream_ret;
-
-            //             /* If fin, mark read, check the file, open it. Or reset if there is no such file */
-            //             stream_ctx->file_name[stream_ctx->name_length + 1] = 0;
-            //             stream_ctx->is_name_read = 1;
-            //             printf("File requested: <%s>\n", stream_ctx->file_name);
-            //             stream_ret = multicast_server_open_stream(server_ctx, stream_ctx);
-
-            //             if (stream_ret == 0)
-            //             {
-            //                 /* If data needs to be sent, set the context as active */
-            //                 ret = picoquic_mark_active_stream(cnx, stream_id, 1, stream_ctx);
-            //             }
-            //             else
-            //             {
-            //                 /* If the file could not be read, reset the stream */
-            //                 multicast_server_delete_stream_context(server_ctx, stream_ctx);
-            //                 (void)picoquic_reset_stream(cnx, stream_id, stream_ret);
-            //             }
-            //         }
-            //     }
-            // }
-            // break;
+            // STREAM data arrived. Should not be the case here
+            break;
         case picoquic_callback_prepare_to_send:
-
-            // /* Active sending API */
-            // if (stream_ctx == NULL)
-            // {
-            //     /* This should never happen */
-            // }
-            // else if (stream_ctx->F == NULL)
-            // {
-            //     /* Error, asking for data after end of file */
-            // }
-            // else
-            // {
-            //     /* Implement the zero copy callback */
-            //     size_t available = stream_ctx->file_length - stream_ctx->file_sent;
-            //     int is_fin = 1;
-            //     uint8_t *buffer;
-
-            //     if (available > length)
-            //     {
-            //         available = length;
-            //         is_fin = 0;
-            //     }
-
-            //     buffer = picoquic_provide_stream_data_buffer(bytes, available, is_fin, !is_fin);
-            //     if (buffer != NULL)
-            //     {
-            //         size_t nb_read = fread(buffer, 1, available, stream_ctx->F);
-
-            //         if (nb_read != available)
-            //         {
-            //             /* Error while reading the file */
-            //             multicast_server_delete_stream_context(server_ctx, stream_ctx);
-            //             (void)picoquic_reset_stream(cnx, stream_id, PICOQUIC_MULTICAST_FILE_READ_ERROR);
-            //         }
-            //         else
-            //         {
-            //             stream_ctx->file_sent += available;
-            //         }
-            //     }
-            //     else
-            //     {
-            //         /* Should never happen according to callback spec. */
-            //         ret = -1;
-            //     }
-            // }
-            // break;
+            // STREAM data should be send. Not the case here
+            break;
         case picoquic_callback_stream_reset: /* Client reset stream #x */
         case picoquic_callback_stop_sending: /* Client asks server to reset stream #x */
-            // if (stream_ctx != NULL)
-            // {
-            //     /* Mark stream as abandoned, close the file, etc. */
-            //     multicast_server_delete_stream_context(server_ctx, stream_ctx);
-            //     picoquic_reset_stream(cnx, stream_id, PICOQUIC_MULTICAST_FILE_CANCEL_ERROR);
-            // }
-            // break;
         case picoquic_callback_stateless_reset:   /* Received an error message */
         case picoquic_callback_close:             /* Received connection close */
         case picoquic_callback_application_close: /* Received application close */
-            /* Delete the server application context */
-            picoquic_multicast_sender_stop(server_ctx->sender_thread_ctx, &server_ctx->sender_app_ctx);
-            multicast_server_delete_context(server_ctx);
-            picoquic_set_callback(cnx, NULL, NULL);
+            // Treat all of this as if the client would have sent STATE(LEFT) or STATE(RETIRED)
+            multicast_server_process_client_left_or_retired(server_cnx_ctx, cnx);
+            if (server_ctx != NULL) {
+                fprintf(stdout, "Callback to close a connection, joined clients new: %i\n", server_ctx->nb_joined_clients);
+            } else {
+                fprintf(stdout, "Callback to close a connection, nobody left, stopping.\n");
+            }
             break;
         case picoquic_callback_version_negotiation:
             /* The server should never receive a version negotiation response */
@@ -409,35 +175,43 @@ int multicast_server_callback(picoquic_cnx_t *cnx,
         case picoquic_callback_ready:
             /* Check that the transport parameters are what the multicast expects */
             if (cnx->is_multicast_enabled == 1 && server_ctx->mc_channel != NULL && cnx->nb_mc_channels == 0 
-                && server_ctx->joined_clients < PICOQUIC_MULTICAST_MAX_CLIENTS) {
+                && server_ctx->nb_joined_clients < PICOQUIC_MULTICAST_MAX_CLIENTS) {
                 // send announce, key and join frame to client
+                server_cnx_ctx->is_joined = 1;
+                server_ctx->nb_joined_clients++;
                 picoquic_schedule_mc_announce_and_join(cnx, server_ctx->mc_channel);
-                server_ctx->joined_clients++;
             }
+            fprintf(stdout, "Callback picoquic_callback_ready, joined clients new: %i\n", server_ctx->nb_joined_clients);
             break;
         case picoquic_callback_multicast_join_attempted:
             // If data sending on multicast channel did not start yet, start now
-            if (!server_ctx->sender_running) {
-                int err = picoquic_multicast_sender_start(server_ctx->sender_port, 
-                    server_ctx->server_cert, server_ctx->server_key, server_ctx->served_file, 
-                    server_ctx->mc_channel, &server_ctx->sender_thread_ctx, &server_ctx->sender_app_ctx
-                );
+            fprintf(stdout, "Callback picoquic_callback_multicast_join_attempted, joined clients: %i, threshold: %i\n", server_ctx->nb_joined_clients, server_ctx->client_threshold);
+            if (!server_ctx->sender_running && server_ctx->nb_joined_clients >= server_ctx->client_threshold) {
+                int err = picoquic_multicast_sender_start(&server_ctx->sender_app_ctx);
                 if (err == 0) {
                     server_ctx->sender_running = 1;
-                     fprintf(stdout, "Multicast sender started\n");
+                    fprintf(stdout, "Multicast sender started\n");
                 } else {
                     fprintf(stderr, "Error while starting multicast sender: %i\n", err);
                 }
             }
-            
             break;
         case picoquic_callback_multicast_join_confirmed: 
             // TODO MC: currently not implemented (when MC_ACK is received)
-            server_ctx->active_clients++;
+            server_cnx_ctx->is_active = 1;
+            server_ctx->nb_active_clients++;
+            fprintf(stdout, "Callback picoquic_callback_multicast_join_confirmed, active clients new: %i\n", server_ctx->nb_active_clients);
             break;
         case picoquic_callback_multicast_left:
-            server_ctx->active_clients--;
-            server_ctx->joined_clients--;
+        case picoquic_callback_multicast_retired:
+            // Client has sent STATE(LEFT) or STATE(RETIRED)
+            // ENHANCE MC: Differentiation between STATE(LEFT) and STATE(RETIRED) needed?
+            multicast_server_process_client_left_or_retired(server_cnx_ctx, cnx);
+            if (server_ctx != NULL) {
+                fprintf(stdout, "Callback to close a connection, joined clients new: %i\n", server_ctx->nb_joined_clients);
+            } else {
+                fprintf(stdout, "Callback to close a connection, nobody left, stopping.\n");
+            }
             break;
         default:
             /* unexpected */
@@ -445,6 +219,35 @@ int multicast_server_callback(picoquic_cnx_t *cnx,
         }
     }
 
+    return ret;
+}
+
+static int multicast_server_loop_cb(picoquic_quic_t* quic, picoquic_packet_loop_cb_enum cb_mode, 
+    void* callback_ctx, void * callback_arg)
+{
+    int ret = 0;
+    multicast_server_ctx_t* server_ctx = (multicast_server_ctx_t*)callback_ctx;
+
+    if (server_ctx == NULL) {
+        ret = PICOQUIC_ERROR_UNEXPECTED_ERROR;
+    }
+    else {
+        switch (cb_mode) {
+        case picoquic_packet_loop_ready:
+        case picoquic_packet_loop_wake_up:
+        case picoquic_packet_loop_after_receive:
+        case picoquic_packet_loop_port_update:
+            break;
+        case picoquic_packet_loop_after_send:
+            if (server_ctx->is_closing) {
+                ret = PICOQUIC_NO_ERROR_TERMINATE_PACKET_LOOP;
+            }
+            break;
+        default:
+            ret = PICOQUIC_ERROR_UNEXPECTED_ERROR;
+            break;
+        }
+    }
     return ret;
 }
 
@@ -460,22 +263,25 @@ int multicast_server_callback(picoquic_cnx_t *cnx,
  * - The loop breaks if the socket return an error.
  */
 
-int picoquic_multicast_server(int server_port, int sender_port, const char *server_cert, const char *server_key, int max_rate, const char *served_file)
+int picoquic_multicast_server(int server_port, int sender_port, const char *server_cert, const char *server_key, int max_rate, const char *served_file, int client_threshold)
 {
-    // TODO MC: Start background thread mc sender server in this method somewhere
-
     /* Start: start the QUIC process with cert and key files */
     int ret = 0;
     picoquic_quic_t *quic = NULL;
     char const *qlog_dir = PICOQUIC_MULTICAST_SERVER_QLOG_DIR;
     uint64_t current_time = 0;
-    multicast_server_ctx_t default_context = {0};
+    multicast_server_cnx_ctx_t default_context = {0}; // Per connection context
+    multicast_server_ctx_t global_ctx = {0}; // Application global context
 
-    default_context.served_file = served_file;
-    default_context.served_file_len = strlen(served_file);
-    default_context.server_cert = server_cert;
-    default_context.server_key = server_key;
-    default_context.sender_port = sender_port;
+    global_ctx.served_filename = served_file;
+    global_ctx.server_cert = server_cert;
+    global_ctx.server_key = server_key;
+    global_ctx.sender_port = sender_port;
+    global_ctx.client_threshold = client_threshold;
+    global_ctx.quic = quic;
+    global_ctx.sender_app_ctx.server_ctx = &global_ctx;
+
+    default_context.global_ctx = &global_ctx;
 
     printf("Starting Picoquic Multicast server on port %d\n", server_port);
     printf("Serving file %s\n", served_file);
@@ -494,15 +300,10 @@ int picoquic_multicast_server(int server_port, int sender_port, const char *serv
     else
     {
         picoquic_set_cookie_mode(quic, 2);
-
         picoquic_set_default_congestion_algorithm(quic, picoquic_bbr_algorithm);
-
         picoquic_set_qlog(quic, qlog_dir);
-
         picoquic_set_log_level(quic, 1);
-
         picoquic_enable_sslkeylog(quic, 1);
-
         picoquic_set_key_log_file_from_env(quic);
         
         // Always accept enable multicast
@@ -512,7 +313,7 @@ int picoquic_multicast_server(int server_port, int sender_port, const char *serv
         struct sockaddr_storage group_ip;
         picoquic_store_text_addr(&group_ip, PICOQUIC_MULTICAST_GROUP_IP, PICOQUIC_MULTICAST_GROUP_PORT);
 
-        picoquic_create_multicast_channel(quic, &default_context.mc_channel, PICOQUIC_MULTICAST_MAX_CLIENTS, &group_ip, NULL, max_rate);
+        picoquic_create_multicast_channel(quic, &global_ctx.mc_channel, PICOQUIC_MULTICAST_MAX_CLIENTS, &group_ip, NULL, max_rate);
     }
 
     /* Wait for packets using the wait loop provided in the library.
@@ -526,15 +327,20 @@ int picoquic_multicast_server(int server_port, int sender_port, const char *serv
      */
     if (ret == 0)
     {
-        ret = picoquic_packet_loop(quic, server_port, 0, 0, 0, 0, NULL, NULL);
+        ret = picoquic_packet_loop(quic, server_port, 0, 0, 0, 0, multicast_server_loop_cb, &global_ctx);
     }
 
-    /* And finish. */
+    // And finish.
     printf("Server exit, ret = %d\n", ret);
 
-    /* Clean up */
-    if (quic != NULL)
-    {
+    // Stop sender loop and delete sender context
+    multicast_sender_ctx_t* sender_ctx = &global_ctx.sender_app_ctx;
+    if (global_ctx.sender_running && sender_ctx != NULL) {
+        multicast_server_delete_sender_context(sender_ctx);
+    }
+
+    // Clean up server context and global quic context
+    if (quic != NULL) {
         picoquic_free(quic);
     }
 

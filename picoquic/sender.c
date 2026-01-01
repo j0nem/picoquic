@@ -3157,8 +3157,7 @@ uint8_t * picoquic_prepare_multicast_integrity_frames(picoquic_cnx_t* cnx, picoq
  */
 uint8_t * picoquic_prepare_multicast_init_frames(picoquic_cnx_t* cnx, picoquic_path_t* path_x,
     uint8_t * bytes, uint8_t * bytes_max, 
-    int * more_data, int* is_pure_ack,
-    uint64_t current_time, uint64_t * next_wake_time)
+    int * more_data, int* is_pure_ack)
 {
     if (cnx->mc_channels == NULL || cnx->nb_mc_channels == 0) {
         return bytes;
@@ -3198,6 +3197,51 @@ uint8_t * picoquic_prepare_multicast_init_frames(picoquic_cnx_t* cnx, picoquic_p
                 *is_pure_ack = 0;
                 bytes = bytes_next;
                 ch->state = picoquic_mc_state_join_pending;
+            }
+        }
+    }
+
+    return bytes;
+}
+
+/*
+ * Prepare leave/retire multicast frames from server to client (MC_LEAVE, MC_RETIRE)
+ */
+uint8_t * picoquic_prepare_multicast_leave_retire_frames(picoquic_cnx_t* cnx,
+    uint8_t * bytes, uint8_t * bytes_max, 
+    int * more_data, int* is_pure_ack)
+{
+    if (cnx->mc_channels == NULL || cnx->nb_mc_channels == 0 || cnx->nb_mc_channels == 0) {
+        return bytes;
+    }
+
+    for (int i = 0; i < cnx->nb_mc_channels; i++) {
+        picoquic_mc_channel_in_cnx_t* ch = cnx->mc_channels[i];
+
+        // CHECK MC: Currently, we always send both MC_LEAVE and MC_RETIRE frames, even if it would be enough
+        // to send MC_RETIRE when mc_retire_scheduled is set. This is just to showcase the functionality of both frames
+        // but can be simplified later to improve performance.
+
+        if (ch->state < picoquic_mc_state_retire_pending) {
+            // if channel leave or retire scheduled
+            if (ch->state < picoquic_mc_state_leave_pending && (ch->mc_leave_scheduled || ch->mc_retire_scheduled)) {
+                // TODO MC: Implement MC_LEAVE frame
+                // uint8_t *bytes_next = picoquic_format_mc_leave_frame(bytes, bytes_max, ch->channel, more_data);
+                // if (bytes_next > bytes) {
+                //     *is_pure_ack = 0;
+                //     bytes = bytes_next;
+                //     ch->state = picoquic_mc_state_leave_pending; 
+                // }
+            }
+            // if channel retire scheduled
+            if (ch->mc_retire_scheduled) {
+                // TODO MC: Implement MC_RETIRE frame
+                // uint8_t *bytes_next = picoquic_format_mc_retire_frame(bytes, bytes_max, ch->channel, more_data);
+                // if (bytes_next > bytes) {
+                //     *is_pure_ack = 0;
+                //     bytes = bytes_next;
+                //     ch->state = picoquic_mc_state_retire_pending; 
+                // }
             }
         }
     }
@@ -4192,8 +4236,7 @@ int picoquic_prepare_packet_ready(picoquic_cnx_t* cnx, picoquic_path_t* path_x, 
                     if (cnx->is_multicast_enabled && !cnx->client_mode) {
                         /* SERVER: If required, prepare multicast announce, key and join frames. */
                         bytes_next = picoquic_prepare_multicast_init_frames(cnx, path_x,
-                        bytes_next, bytes_max, &more_data, &is_pure_ack,
-                        current_time, next_wake_time);
+                        bytes_next, bytes_max, &more_data, &is_pure_ack);
 
                         bytes_next = picoquic_prepare_multicast_integrity_frames(cnx, path_x,
                         bytes_next, bytes_max, &more_data, &is_pure_ack,
@@ -4221,6 +4264,12 @@ int picoquic_prepare_packet_ready(picoquic_cnx_t* cnx, picoquic_path_t* path_x, 
                         if (ret == 0) {
                             bytes_next = picoquic_prepare_stream_and_datagrams(cnx, path_x, bytes_next, bytes_max,
                                 UINT64_MAX, current_time, &more_data, &is_pure_ack, &no_data_to_send, &ret);
+                        }
+
+                        if (cnx->is_multicast_enabled && !cnx->client_mode) {
+                            /* SERVER: Send MC_LEAVE and MC_RETIRE frames to client if required. */
+                            bytes_next = picoquic_prepare_multicast_leave_retire_frames(cnx,
+                            bytes_next, bytes_max, &more_data, &is_pure_ack);
                         }
 
                         /* TODO: replace this by scheduling of BDP frame when window has been estimated */

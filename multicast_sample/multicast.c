@@ -51,7 +51,7 @@ static void usage(char const * multicast_name)
     fprintf(stderr, "Usage:\n");
     fprintf(stderr, "    %s client server_name port folder max_rate\n", multicast_name);
     fprintf(stderr, "or :\n");
-    fprintf(stderr, "    %s server port_server port_sender cert_file private_key_file max_rate served_file_name\n", multicast_name);
+    fprintf(stderr, "    %s server port_server port_sender cert_file private_key_file max_rate served_file_name [client_threshold]\n", multicast_name);
     exit(1);
 }
 
@@ -84,7 +84,7 @@ int main(int argc, char** argv)
         }
     }
     else if (strcmp(argv[1], "server") == 0) {
-        if (argc != 8) {
+        if (argc < 8) {
             usage(argv[0]);
         }
         else {
@@ -92,8 +92,12 @@ int main(int argc, char** argv)
             int sender_port = get_port(argv[0], argv[3]);
 
             int max_rate = atoi(argv[6]);
+            int client_threshold = 1;
+            if (argc >= 9) {
+                client_threshold = atoi(argv[8]);
+            }
 
-            exit_code = picoquic_multicast_server(server_port, sender_port, argv[4], argv[5], max_rate, argv[7]);
+            exit_code = picoquic_multicast_server(server_port, sender_port, argv[4], argv[5], max_rate, argv[7], client_threshold);
         }
     }
     else

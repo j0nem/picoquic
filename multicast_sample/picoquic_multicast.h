@@ -57,39 +57,41 @@ extern "C"
 
 #define PICOQUIC_MULTICAST_SENDER_MAX_FILES 32
 
-typedef struct st_multicast_sender_datagram_ctx_t {
-    struct st_multicast_sender_datagram_ctx_t* next_datagram;
-    struct st_multicast_sender_datagram_ctx_t* previous_datagram;
-    size_t name_length;
-    size_t file_length;
-    size_t file_sent;
-    FILE* F;
-    uint64_t fragment_number;
-    unsigned int is_name_sent : 1;
-    unsigned int is_file_open : 1;
-    unsigned int is_datagram_finished : 1;
-} multicast_sender_datagram_ctx_t;
+typedef struct st_multicast_server_ctx_t multicast_server_ctx_t;
 
 typedef struct st_multicast_sender_ctx_t {
-    picoquic_quic_t* quic;
-    picoquic_multicast_channel_t *mc_channel;
-    char const* file_path;
-    multicast_sender_datagram_ctx_t* first_datagram;
-    multicast_sender_datagram_ctx_t* last_datagram;
-    int is_disconnected;
+    FILE* F;
+    size_t file_length;
+    size_t file_sent;
+    unsigned int file_was_opened : 1;
+    uint64_t current_fragment_number;
+    picoquic_network_thread_ctx_t* thread_ctx;
+    multicast_server_ctx_t* server_ctx;
 } multicast_sender_ctx_t;
 
-int picoquic_multicast_client(char const *server_name, int server_port, char const *default_dir, int max_rate);
+typedef struct st_multicast_server_ctx_t
+{
+    char const *served_filename;
+    picoquic_multicast_channel_t *mc_channel;
+    int nb_joined_clients;
+    int nb_active_clients;
+    multicast_sender_ctx_t sender_app_ctx;
+    int sender_running;
+    int client_threshold;
+    const char *server_cert; 
+    const char *server_key;
+    int sender_port;
+    picoquic_quic_t* quic;
+    int is_closing;
+} multicast_server_ctx_t;
 
-int picoquic_multicast_sender_start(int server_port, 
-    const char* server_cert, const char* server_key,
-    char const* file_path, 
-    picoquic_multicast_channel_t* channel, picoquic_network_thread_ctx_t** thread_ctx,
-    multicast_sender_ctx_t* sender_ctx);
-    
-void picoquic_multicast_sender_stop(picoquic_network_thread_ctx_t* thread_ctx, multicast_sender_ctx_t* sender_ctx);
+int picoquic_multicast_client(char const *server_name, int server_port, 
+    char const *default_dir, int max_rate);
 
-int picoquic_multicast_server(int server_port, int sender_port, const char *server_cert, const char *server_key, int max_rate, const char *served_file);
+int picoquic_multicast_sender_start(multicast_sender_ctx_t* sender_ctx);
+
+int picoquic_multicast_server(int server_port, int sender_port, const char *server_cert, 
+    const char *server_key, int max_rate, const char *served_file, int client_threshold);
 
 #ifdef __cplusplus
 }
