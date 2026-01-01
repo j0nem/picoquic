@@ -1187,15 +1187,32 @@ int picoquic_join_mc_channel(picoquic_cnx_t* cnx, picoquic_multicast_channel_id_
     return 0;
 }
 
+// Schedule State(Left) / State(Retired) on client when in retire_waiting / leave_waiting states and final packet number has been received
+void picoquic_multicast_update_leave_retired_waiting(picoquic_mc_channel_in_cnx_t* ch_in_cnx) {
+    if (ch_in_cnx->channel->latest_packet_number_received >= ch_in_cnx->retire_after_packet_number && ch_in_cnx->state == picoquic_mc_state_retire_waiting) {
+        ch_in_cnx->state = picoquic_mc_state_retire_pending;
+        ch_in_cnx->state_scheduled = picoquic_mc_state_retired;
+        ch_in_cnx->state_frame_scheduled = picoquic_mc_state_frame_retired;
+        ch_in_cnx->state_reason_scheduled = picoquic_mc_state_reason_requested_by_server;
+    } 
+    else if (ch_in_cnx->channel->latest_packet_number_received >= ch_in_cnx->leave_after_packet_number && ch_in_cnx->state == picoquic_mc_state_leave_waiting) {
+        ch_in_cnx->state = picoquic_mc_state_leave_pending;
+        ch_in_cnx->state_scheduled = picoquic_mc_state_left;
+        ch_in_cnx->state_frame_scheduled = picoquic_mc_state_frame_left;
+        ch_in_cnx->state_reason_scheduled = picoquic_mc_state_reason_requested_by_server;
+    }
+}
+
 // Schedule MC_LEAVE and MC_RETIRE frames for sending to clients implicitly by setting flags in ch_in_cnx
 int picoquic_schedule_mc_leave_and_retire(picoquic_multicast_channel_t* channel) 
 {
     for (int i = 0; i < channel->nb_used_in_cnx; i++) {
         picoquic_mc_channel_in_cnx_t* ch = channel->used_in_cnx[i];
         ch->mc_leave_scheduled = 1;
-        ch->mc_retire_scheduled = 1;
+        // ch->mc_retire_scheduled = 1;
     }
     channel->is_retiring = 1;
+    fprintf(stdout, "MC_LEAVE (& MC_RETIRE) scheduled for %i clients\n", channel->nb_used_in_cnx);
 
     return 0;
 }

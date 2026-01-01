@@ -206,10 +206,12 @@ int multicast_client_callback(picoquic_cnx_t *cnx,
             break;
         case picoquic_callback_stateless_reset:
             fprintf(stdout, "app: Received a stateless reset.\n");
-            break;
         case picoquic_callback_close:
             fprintf(stdout, "app: Received request to close connection\n");
-            break;
+        case picoquic_callback_multicast_left:
+            fprintf(stdout, "app: Left the multicast channel, stop receiving\n");
+        case picoquic_callback_multicast_retired:
+            fprintf(stdout, "app: Retired the multicast client, stop receiving\n");
         case picoquic_callback_application_close:
             fprintf(stdout, "app: Received request to close application.\n");
             /* Remove the application callback */
