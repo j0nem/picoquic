@@ -1120,12 +1120,7 @@ void* picoquic_packet_loop_v3(void* v_ctx)
                 }
             }
             // CHECK MC: Set delta lower on active multicast receivers, set to zero when MC_INTEGRITY frames have to be sent
-            int64_t multicast_delta_t;
-            if (picoquic_need_to_send_multicast_frames(quic, mc_integrity_packet_threshold, current_time, &multicast_delta_t)) {
-                if (multicast_delta_t < delta_t) {
-                    delta_t = multicast_delta_t;
-                }
-            }
+            picoquic_wake_for_multicast_frames(quic, mc_integrity_packet_threshold, current_time, &delta_t);
         }
         else {
             nb_loop_immediate++;

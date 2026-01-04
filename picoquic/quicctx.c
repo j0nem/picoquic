@@ -935,14 +935,13 @@ picoquic_multicast_channel_t* picoquic_find_multicast_channel_global(picoquic_mu
 // `MC_INTEGRITY`/`MC_LEAVE`/`MC_RETIRE` or other multicast control frames to be sent via unicast
 // If yes, set delta_t lower for more frequent checking
 // If `MC_INTEGRITY` sending is at least some frames behind (defined by threshold), wake the cnx and set delta_t to zero
-int picoquic_need_to_send_multicast_frames(picoquic_quic_t* quic, uint64_t threshold, uint64_t current_time, int64_t* delta_t) {
+int picoquic_wake_for_multicast_frames(picoquic_quic_t* quic, uint64_t threshold, uint64_t current_time, int64_t* delta_t) {
     if (quic->nb_mc_channels == 0) {
         return 0;
     }
 
-    int64_t active_max_delta_t = 500000;
-
-    int active = 0;
+    int64_t active_max_delta_t = 300000;
+    int64_t wake_after_active = 100000;
 
     for (int i = 0; i < quic->nb_mc_channels; i++) {
         picoquic_multicast_channel_t* channel = quic->mc_channels[i];
@@ -955,13 +954,21 @@ int picoquic_need_to_send_multicast_frames(picoquic_quic_t* quic, uint64_t thres
             for (int j = 0; j < channel->nb_used_in_cnx; j++) {
                 picoquic_mc_channel_in_cnx_t* ch_in_cnx = channel->used_in_cnx[j];
                 if (ch_in_cnx->state < picoquic_mc_state_left) { // ENHANCE MC: Clarify when MC_INTEGRITY frames still need to be sent
+                    
                     // ENHANCE MC: Check if the receivers are really active (sent MC_ACK frames in the recent past)
                     // -> if not, make delay longer
+
+                    // Real Wake: Wake cnx if we really know that we need to send something (integrity, leave or retire frame)
                     if ((channel->packet_integrity_last != NULL && ch_in_cnx->mc_integrity_latest_pn_sent < channel->packet_integrity_last->packet_number)
-                        || ch_in_cnx->mc_leave_scheduled || ch_in_cnx->mc_retire_scheduled) {
-                            active = 1;
+                        || ch_in_cnx->mc_leave_scheduled) {
+                            ch_in_cnx->last_time_woken = current_time;
                             picoquic_reinsert_by_wake_time(quic, ch_in_cnx->cnx, current_time);
+                    // Threshold wake: Also wake a few more times if the last real wake was not too long ago, to make sure we really 
+                    // didn't miss anything before going into the long 10 seconds break of picoquic
+                    } else if (ch_in_cnx->last_time_woken + wake_after_active >= current_time) {
+                        picoquic_reinsert_by_wake_time(quic, ch_in_cnx->cnx, current_time);
                     }
+
                     if (channel->packet_integrity_last != NULL &&
                         ch_in_cnx->mc_integrity_latest_pn_sent + threshold < channel->packet_integrity_last->packet_number) {
                         *delta_t = 0;
@@ -971,10 +978,6 @@ int picoquic_need_to_send_multicast_frames(picoquic_quic_t* quic, uint64_t thres
                 }
             }
         }
-    }
-
-    if (active) {
-        return 1;
     }
 
     return 0;

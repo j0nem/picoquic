@@ -5547,7 +5547,6 @@ int picoquic_prepare_next_packet_ex(picoquic_quic_t* quic,
         picoquic_cnx_t* cnx = picoquic_get_earliest_cnx_to_wake(quic, current_time);
 
         if (cnx == NULL) {
-            fprintf(stdout, "No connection found to wake now\n");
             *send_length = 0;
         }
         else {
