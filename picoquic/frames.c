@@ -7551,6 +7551,8 @@ const uint8_t* picoquic_decode_mc_state_frame(picoquic_cnx_t* cnx, const uint8_t
         return NULL;
     }
 
+    channel_found->latest_state_sequence_available = sequence_number;
+
     // ENHANCE MC: Maybe add more defined behavior for the different state types
 
     // MC_STATE(Joined)
@@ -7596,12 +7598,12 @@ const uint8_t* picoquic_decode_mc_state_frame(picoquic_cnx_t* cnx, const uint8_t
     if (state == picoquic_mc_state_frame_left) {
         if (channel_found->state >= 5 && channel_found->state < picoquic_mc_state_left) {
             // client leaves a non-retired channel after join request by server
-            fprintf(stdout, "Got MC_STATE(Leave) from client\n");
+            fprintf(stdout, "Got MC_STATE(Left) from client\n");
             channel_found->state = picoquic_mc_state_left; 
         }
         else {
             // ignoring MC_STATE frame 
-            fprintf(stdout, "Notice: MC_STATE(Leave) frame received in non-joined state, ignoring frame\n");
+            fprintf(stdout, "Notice: MC_STATE(Left) frame received in non-joined state, ignoring frame\n");
         }
     }
 
@@ -7745,6 +7747,24 @@ int picoquic_check_mc_state_needs_repeat(picoquic_cnx_t* cnx, const uint8_t* byt
 /*
  * MC_INTEGRITY frame
 */
+
+void picoquic_verify_multicast_packet(picoquic_multicast_packet_t** packet, picoquic_mc_channel_in_cnx_t* channel, uint64_t current_time) {
+    picoquic_multicast_update_leave_retired_waiting(channel, current_time);
+
+    if ((*packet)->next != NULL) {
+        ((picoquic_multicast_packet_t*)(*packet)->next)->prev = (*packet)->prev;
+    } else {
+        channel->awaiting_integrity_check_last = (picoquic_multicast_packet_t*)(*packet)->prev;
+    }
+    if ((*packet)->prev != NULL) {
+        ((picoquic_multicast_packet_t*)(*packet)->prev)->next = (*packet)->next;
+    } else {
+        channel->awaiting_integrity_check_first = (picoquic_multicast_packet_t*)(*packet)->next;
+    }
+    free((*packet)->bytes);
+    free((*packet)->hash);
+    free((*packet));
+}
 
 uint8_t* picoquic_format_mc_integrity_frame(uint8_t* bytes, uint8_t* bytes_max, picoquic_mc_channel_in_cnx_t* ch_in_cnx, int * more_data) {
     uint8_t* bytes0 = bytes;
@@ -8015,24 +8035,12 @@ const uint8_t* picoquic_decode_mc_integrity_frame(picoquic_cnx_t* cnx, const uin
 
                 // Hash verified! Decode frames and forward it to application
                 fprintf(stdout, "Hash of packet number %lu VERIFIED!\n", packet->pn);
+                
                 picoquic_decode_frames_multicast(channel_found, packet->bytes, packet->length, 
                     NULL, packet->pn, current_time, 1
                 );
-
-                // Remove packet from awaiting_integrity_check list
-                if (packet->next != NULL) {
-                    ((picoquic_multicast_packet_t*)packet->next)->prev = packet->prev;
-                } else {
-                    channel_found->awaiting_integrity_check_last = (picoquic_multicast_packet_t*)packet->prev;
-                }
-                if (packet->prev != NULL) {
-                    ((picoquic_multicast_packet_t*)packet->prev)->next = packet->next;
-                } else {
-                    channel_found->awaiting_integrity_check_first = (picoquic_multicast_packet_t*)packet->next;
-                }
-                free(packet->bytes);
-                free(packet->hash);
-                free(packet);
+                
+                picoquic_verify_multicast_packet(&packet, channel_found, current_time);
             }
 
             integrity = ((picoquic_multicast_packet_integrity_t*)integrity->next);
@@ -8559,7 +8567,7 @@ uint8_t* picoquic_format_mc_leave_frame(uint8_t* bytes, uint8_t* bytes_max, pico
     // MC_STATE Sequence number
     // After Packet number
     if ((bytes = picoquic_frames_varint_encode(bytes, bytes_max, ch_in_cnx->latest_state_sequence_available)) == NULL
-        || (bytes = picoquic_frames_varint_encode(bytes, bytes_max, ch_in_cnx->channel->pkt_ctx.send_sequence)) == NULL) {
+        || (bytes = picoquic_frames_varint_encode(bytes, bytes_max, ch_in_cnx->channel->pkt_ctx.send_sequence - 1)) == NULL) {
         *more_data = 1;
         return bytes0;
     } 
@@ -8584,7 +8592,7 @@ const uint8_t* picoquic_skip_mc_leave_frame(const uint8_t* bytes, const uint8_t*
 }
 
 const uint8_t* picoquic_decode_mc_leave_frame(picoquic_cnx_t* cnx, const uint8_t* bytes, 
-    const uint8_t* bytes_max) 
+    const uint8_t* bytes_max, uint64_t current_time) 
 {
     const uint8_t* bytes0 = bytes;
 
@@ -8626,19 +8634,29 @@ const uint8_t* picoquic_decode_mc_leave_frame(picoquic_cnx_t* cnx, const uint8_t
 
     // ENHANCE MC: Add more detailled behavior in case of wrong sequence numbers
     if (mc_state_sequence_number < channel_found->latest_state_sequence_available) {
-        fprintf(stderr, "Error: Received a MC_LEAVE frame with wrong MC_STATE sequence number\n");
+        fprintf(stderr, "Error: Received a MC_LEAVE frame with wrong MC_STATE sequence number: %lu, actual sequence: %lu\n", mc_state_sequence_number, channel_found->latest_state_sequence_available);
         return NULL;
     }
 
-    if (after_packet_number > channel_found->channel->pkt_ctx.send_sequence) {
-        fprintf(stderr, "Received a MC_LEAVE frame with future packet number, wait until it arrives\n");
+    uint64_t highest_verified = picoquic_multicast_get_latest_packet_number_verified(channel_found->channel);
+
+    if (highest_verified < UINT64_MAX) {
+        fprintf(stdout, "Highest pn verified before first loss: %lu\n", highest_verified);
+    } else {
+        fprintf(stdout, "Highest pn verified before first loss: NULL\n");
+    }
+
+    if (highest_verified < UINT64_MAX && after_packet_number > highest_verified) {
+        channel_found->leave_after_packet_number = after_packet_number;
+        channel_found->leave_received_at = current_time;
+        fprintf(stderr, "Received a MC_LEAVE frame with future packet number (%li), wait until it arrives\n", after_packet_number);
     }
 
     if (channel_found->state < picoquic_mc_state_leave_waiting) {
         channel_found->state = picoquic_mc_state_leave_waiting;
     }
 
-    picoquic_multicast_update_leave_retired_waiting(channel_found);
+    picoquic_multicast_update_leave_retired_waiting(channel_found, current_time);
 
     return bytes;
 }
@@ -8928,20 +8946,7 @@ int picoquic_decode_frames_multicast(picoquic_mc_channel_in_cnx_t* ch_in_cnx, co
                 fprintf(stdout, "Hash of packet number %lu VERIFIED (without caching)!\n", pn64);
                 integrity_verified = 1;
 
-                // Remove packet from awaiting_integrity_check list
-                if (packet->next != NULL) {
-                    ((picoquic_multicast_packet_t*)packet->next)->prev = packet->prev;
-                } else {
-                    ch_in_cnx->awaiting_integrity_check_last = (picoquic_multicast_packet_t*)packet->prev;
-                }
-                if (packet->prev != NULL) {
-                    ((picoquic_multicast_packet_t*)packet->prev)->next = packet->next;
-                } else {
-                    ch_in_cnx->awaiting_integrity_check_first = (picoquic_multicast_packet_t*)packet->next;
-                }
-                free(packet->bytes);
-                free(packet->hash);
-                free(packet);
+                picoquic_verify_multicast_packet(&packet, ch_in_cnx, current_time);
             }
 
             integrity = ((picoquic_multicast_packet_integrity_t*)integrity->next);
@@ -8965,7 +8970,7 @@ int picoquic_decode_frames_multicast(picoquic_mc_channel_in_cnx_t* ch_in_cnx, co
     ch_in_cnx->channel->latest_packet_number_received = pn64;
 
     // Handle leave/retire when the packet number is reached
-    picoquic_multicast_update_leave_retired_waiting(ch_in_cnx);
+    picoquic_multicast_update_leave_retired_waiting(ch_in_cnx, current_time);
 
     while (bytes != NULL && bytes < bytes_max) {
         uint8_t first_byte = bytes[0];
@@ -9434,7 +9439,7 @@ int picoquic_decode_frames(picoquic_cnx_t* cnx, picoquic_path_t * path_x, const 
                             break;
                         case picoquic_frame_type_mc_leave:
                             fprintf(stdout, "Got MC_LEAVE frame\n");
-                            bytes = picoquic_decode_mc_leave_frame(cnx, bytes, bytes_max);
+                            bytes = picoquic_decode_mc_leave_frame(cnx, bytes, bytes_max, current_time);
                             break;
                         default:
                             /* Not implemented yet! */

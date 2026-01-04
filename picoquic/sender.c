@@ -3291,6 +3291,9 @@ uint8_t * picoquic_prepare_multicast_state_frames(picoquic_cnx_t* cnx,
     for (int i = 0; i < cnx->nb_mc_channels; i++) {
         picoquic_mc_channel_in_cnx_t* ch = cnx->mc_channels[i];
 
+        // If waiting for leaving/retiring channel as client, see if timeout is reached
+        picoquic_multicast_update_leave_retired_waiting(ch, current_time);
+
         // if in state "join pending" and MC_KEY received -> check if client can join
         if (ch->state >= picoquic_mc_state_join_pending && ch->state < picoquic_mc_state_join_attempted && ch->latest_key_sequence_available > 0) {
             nb_channels_join_pending++;
@@ -3312,29 +3315,29 @@ uint8_t * picoquic_prepare_multicast_state_frames(picoquic_cnx_t* cnx,
                 // Callback to application to decide whether the join should happen or not
                 cnx->callback_fn(cnx, 0, NULL, 0, picoquic_callback_multicast_join_possible, cnx->callback_ctx, &ch->channel->channel_id);
             }
+        }
             
-            // Send scheduled state frame (e.g. desired by application)
-            if (ch->state_scheduled != 0 && ch->state_frame_scheduled != 0 && ch->state_scheduled != ch->state) {
-                picoquic_frame_type_enum_t ftype = picoquic_frame_type_mc_state_multicast;
-                if (ch->state_reason_scheduled > picoquic_mc_state_reason_limit_violation) {
-                    ftype = picoquic_frame_type_mc_state_application;
-                }
-                uint8_t *bytes_next = picoquic_format_mc_state_frame(bytes, bytes_max, ch, more_data,
-                    ftype,
-                    ch->state_frame_scheduled,
-                    ch->state_reason_scheduled);
+        // Send scheduled state frame (e.g. desired by application)
+        if (ch->state_scheduled != 0 && ch->state_frame_scheduled != 0 && ch->state_scheduled != ch->state) {
+            fprintf(stdout, "Format MC_STATE frame\n");
+            picoquic_frame_type_enum_t ftype = picoquic_frame_type_mc_state_multicast;
+            if (ch->state_reason_scheduled > picoquic_mc_state_reason_limit_violation) {
+                ftype = picoquic_frame_type_mc_state_application;
+            }
+            uint8_t *bytes_next = picoquic_format_mc_state_frame(bytes, bytes_max, ch, more_data,
+                ftype,
+                ch->state_frame_scheduled,
+                ch->state_reason_scheduled);
 
-                if (bytes_next > bytes) {
-                    *is_pure_ack = 0;
-                    bytes = bytes_next;
-                    ch->state = ch->state_scheduled; 
-                    ch->state_frame_scheduled = 0;
-                    ch->state_reason_scheduled = 0;
-                    ch->state_scheduled = 0;
-                }
+            if (bytes_next > bytes) {
+                *is_pure_ack = 0;
+                bytes = bytes_next;
+                ch->state = ch->state_scheduled; 
+                ch->state_frame_scheduled = 0;
+                ch->state_reason_scheduled = 0;
+                ch->state_scheduled = 0;
             }
         }
-        // TODO MC: Implement handling of other states -> sending appropriate MC_STATE frames
     }
 
     return bytes;

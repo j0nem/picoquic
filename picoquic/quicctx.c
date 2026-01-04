@@ -946,7 +946,7 @@ int picoquic_wake_for_multicast_frames(picoquic_quic_t* quic, uint64_t threshold
     for (int i = 0; i < quic->nb_mc_channels; i++) {
         picoquic_multicast_channel_t* channel = quic->mc_channels[i];
 
-        if (channel->client_mode || channel->is_retired) {
+        if (channel->is_retired) {
             continue;
         }
 
@@ -955,6 +955,15 @@ int picoquic_wake_for_multicast_frames(picoquic_quic_t* quic, uint64_t threshold
                 picoquic_mc_channel_in_cnx_t* ch_in_cnx = channel->used_in_cnx[j];
                 if (ch_in_cnx->state < picoquic_mc_state_left) { // ENHANCE MC: Clarify when MC_INTEGRITY frames still need to be sent
                     
+                    // In client mode, if in waiting state, wake more often, because client is waiting for timeout to leave channel
+                    if (channel->client_mode) {
+                        if (ch_in_cnx->state == picoquic_mc_state_leave_waiting || ch_in_cnx->state == picoquic_mc_state_retire_waiting) {
+                            picoquic_reinsert_by_wake_time(quic, ch_in_cnx->cnx, current_time);
+                            *delta_t = active_max_delta_t;
+                        }
+                        break;
+                    }
+
                     // ENHANCE MC: Check if the receivers are really active (sent MC_ACK frames in the recent past)
                     // -> if not, make delay longer
 
@@ -1199,15 +1208,54 @@ int picoquic_join_mc_channel(picoquic_cnx_t* cnx, picoquic_multicast_channel_id_
     return 0;
 }
 
+
+
+// Get highest packet number (strictly increasing without holes), for which a integrity hash is available
+uint64_t picoquic_multicast_get_latest_packet_number_verified(picoquic_multicast_channel_t* channel) {
+    if (channel->packet_integrity_first != NULL) {
+        picoquic_multicast_integrity_merge_sort(&channel->packet_integrity_first);
+        
+        picoquic_multicast_packet_integrity_t* current = channel->packet_integrity_first;
+        uint64_t last_pn = 0;
+        int first = 1;
+
+        while(current != NULL) {
+            if (((first && current->packet_number == last_pn) || (!first && current->packet_number == last_pn + 1))
+            ) {
+                first = 0;
+                last_pn = current->packet_number;
+                current = (picoquic_multicast_packet_integrity_t*)current->next;
+            } else {
+                break;
+            }
+        }
+
+        if (!first) {
+            return last_pn;
+        }
+    }
+
+    return UINT64_MAX;
+}
+
 // Schedule State(Left) / State(Retired) on client when in retire_waiting / leave_waiting states and final packet number has been received
-void picoquic_multicast_update_leave_retired_waiting(picoquic_mc_channel_in_cnx_t* ch_in_cnx) {
-    if (ch_in_cnx->channel->latest_packet_number_received >= ch_in_cnx->retire_after_packet_number && ch_in_cnx->state == picoquic_mc_state_retire_waiting) {
+void picoquic_multicast_update_leave_retired_waiting(picoquic_mc_channel_in_cnx_t* ch_in_cnx, uint64_t current_time) {
+    uint64_t highest_verified = picoquic_multicast_get_latest_packet_number_verified(ch_in_cnx->channel);
+    uint64_t timeout = 3000000; // CHECK MC: Shortcut: If desired packet number is not arriving 3 seconds after MC_LEAVE, just leave
+
+    // TODO MC: Improve this check here so that not only the highest packet number verified is checked when leaving,
+    // but also, if all packets before were already received and verified (sometimes older packages arrive late)
+    if (ch_in_cnx->state == picoquic_mc_state_retire_waiting && 
+        ((highest_verified < UINT64_MAX && highest_verified >= ch_in_cnx->retire_after_packet_number) || ch_in_cnx->retire_received_at + timeout <= current_time)
+    ) {
         ch_in_cnx->state = picoquic_mc_state_retire_pending;
         ch_in_cnx->state_scheduled = picoquic_mc_state_retired;
         ch_in_cnx->state_frame_scheduled = picoquic_mc_state_frame_retired;
         ch_in_cnx->state_reason_scheduled = picoquic_mc_state_reason_requested_by_server;
     } 
-    else if (ch_in_cnx->channel->latest_packet_number_received >= ch_in_cnx->leave_after_packet_number && ch_in_cnx->state == picoquic_mc_state_leave_waiting) {
+    else if (ch_in_cnx->state == picoquic_mc_state_leave_waiting && 
+        ((highest_verified < UINT64_MAX && highest_verified >= ch_in_cnx->leave_after_packet_number) || ch_in_cnx->leave_received_at + timeout <= current_time)
+    ) {
         ch_in_cnx->state = picoquic_mc_state_leave_pending;
         ch_in_cnx->state_scheduled = picoquic_mc_state_left;
         ch_in_cnx->state_frame_scheduled = picoquic_mc_state_frame_left;
