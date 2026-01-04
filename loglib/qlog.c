@@ -1420,6 +1420,54 @@ void qlog_mc_join_frame(FILE* f, bytestream* s)
     fprintf(f, ", \"mc_key_sequence_number\": %"PRIu64"", key_seq_num);
 }
 
+void qlog_mc_leave_frame(FILE* f, bytestream* s)
+{
+    uint64_t channel_id_length = 0;
+    byteread_vint(s, &channel_id_length);
+    fprintf(f, ", \"channel_id_length\": %"PRIu64"", channel_id_length);
+
+    fprintf(f, ", \"channel_id\": \"");
+    for (uint64_t i = 0; i < channel_id_length; i++) {
+        uint8_t byte = 0;
+        byteread_int8(s, &byte);
+        if (i == 0) {
+            fprintf(f, "%02X", byte);
+        } else {
+            fprintf(f, " %02X", byte);
+        }
+    }
+
+    uint64_t state_seq_num = 0;
+    byteread_vint(s, &state_seq_num);
+    fprintf(f, "\", \"mc_state_sequence_number\": %"PRIu64"", state_seq_num);
+
+    uint64_t after_packet_number = 0;
+    byteread_vint(s, &after_packet_number);
+    fprintf(f, ", \"after_packet_number\": %"PRIu64"", after_packet_number);
+}
+
+void qlog_mc_retire_frame(FILE* f, bytestream* s)
+{
+    uint64_t channel_id_length = 0;
+    byteread_vint(s, &channel_id_length);
+    fprintf(f, ", \"channel_id_length\": %"PRIu64"", channel_id_length);
+
+    fprintf(f, ", \"channel_id\": \"");
+    for (uint64_t i = 0; i < channel_id_length; i++) {
+        uint8_t byte = 0;
+        byteread_int8(s, &byte);
+        if (i == 0) {
+            fprintf(f, "%02X", byte);
+        } else {
+            fprintf(f, " %02X", byte);
+        }
+    }
+
+    uint64_t after_packet_number = 0;
+    byteread_vint(s, &after_packet_number);
+    fprintf(f, ", \"after_packet_number\": %"PRIu64"", after_packet_number);
+}
+
 void qlog_mc_state_frame(FILE* f, bytestream* s)
 {
     uint64_t channel_id_length = 0;
@@ -1742,6 +1790,12 @@ int qlog_packet_frame(bytestream * s, void * ptr)
         break;
     case picoquic_frame_type_mc_join:
         qlog_mc_join_frame(f, s);
+        break;
+    case picoquic_frame_type_mc_leave:
+        qlog_mc_leave_frame(f, s);
+        break;
+    case picoquic_frame_type_mc_retire:
+        qlog_mc_retire_frame(f, s);
         break;
     case picoquic_frame_type_mc_state_multicast:
     case picoquic_frame_type_mc_state_application:

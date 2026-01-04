@@ -137,6 +137,10 @@ const char * ftype2str(picoquic_frame_type_enum_t ftype)
         return "mc_key";
     case picoquic_frame_type_mc_join:
         return "mc_join";
+    case picoquic_frame_type_mc_leave:
+        return "mc_leave";
+    case picoquic_frame_type_mc_retire:
+        return "mc_retire";
     case picoquic_frame_type_mc_state_multicast:
         return "mc_state_multicast";
     case picoquic_frame_type_mc_state_application:
