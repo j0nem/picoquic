@@ -931,41 +931,50 @@ picoquic_multicast_channel_t* picoquic_find_multicast_channel_global(picoquic_mu
     return NULL;
 }
 
-// Find out if served channels have active joined multicast receivers that need `MC_INTEGRITY` frames
+// Find out if served channels have active joined multicast receivers that need 
+// `MC_INTEGRITY`/`MC_LEAVE`/`MC_RETIRE` or other multicast control frames to be sent via unicast
 // If yes, set delta_t lower for more frequent checking
 // If `MC_INTEGRITY` sending is at least some frames behind (defined by threshold), wake the cnx and set delta_t to zero
-int picoquic_need_to_send_multicast_integrity(picoquic_quic_t* quic, uint64_t threshold, uint64_t current_time, int64_t* delta_t) {
+int picoquic_need_to_send_multicast_frames(picoquic_quic_t* quic, uint64_t threshold, uint64_t current_time, int64_t* delta_t) {
     if (quic->nb_mc_channels == 0) {
         return 0;
     }
 
-    int64_t active_max_delta_t = 300000;
+    int64_t active_max_delta_t = 500000;
+
+    int active = 0;
 
     for (int i = 0; i < quic->nb_mc_channels; i++) {
         picoquic_multicast_channel_t* channel = quic->mc_channels[i];
 
-        if (channel->client_mode || channel->is_retired || channel->packet_integrity_last == NULL) {
+        if (channel->client_mode || channel->is_retired) {
             continue;
         }
 
         if (channel->nb_used_in_cnx > 0) {
             for (int j = 0; j < channel->nb_used_in_cnx; j++) {
                 picoquic_mc_channel_in_cnx_t* ch_in_cnx = channel->used_in_cnx[j];
-                if (ch_in_cnx->state < picoquic_mc_state_leave_pending) {
+                if (ch_in_cnx->state < picoquic_mc_state_left) { // ENHANCE MC: Clarify when MC_INTEGRITY frames still need to be sent
                     // ENHANCE MC: Check if the receivers are really active (sent MC_ACK frames in the recent past)
                     // -> if not, make delay longer
-                    if (ch_in_cnx->mc_integrity_latest_pn_sent + threshold <= channel->packet_integrity_last->packet_number) {
-                        picoquic_reinsert_by_wake_time(quic, ch_in_cnx->cnx, current_time);
-                        *delta_t = 0;
-                    } else {
-                        if (*delta_t > active_max_delta_t) {
-                            *delta_t = active_max_delta_t;
-                        }
+                    if ((channel->packet_integrity_last != NULL && ch_in_cnx->mc_integrity_latest_pn_sent < channel->packet_integrity_last->packet_number)
+                        || ch_in_cnx->mc_leave_scheduled || ch_in_cnx->mc_retire_scheduled) {
+                            active = 1;
+                            picoquic_reinsert_by_wake_time(quic, ch_in_cnx->cnx, current_time);
                     }
-                    return 1;
+                    if (channel->packet_integrity_last != NULL &&
+                        ch_in_cnx->mc_integrity_latest_pn_sent + threshold < channel->packet_integrity_last->packet_number) {
+                        *delta_t = 0;
+                    } else if (*delta_t > active_max_delta_t) {
+                        *delta_t = active_max_delta_t;
+                    }
                 }
             }
         }
+    }
+
+    if (active) {
+        return 1;
     }
 
     return 0;
@@ -1206,13 +1215,23 @@ void picoquic_multicast_update_leave_retired_waiting(picoquic_mc_channel_in_cnx_
 // Schedule MC_LEAVE and MC_RETIRE frames for sending to clients implicitly by setting flags in ch_in_cnx
 int picoquic_schedule_mc_leave_and_retire(picoquic_multicast_channel_t* channel) 
 {
+    int scheduled = 0;
     for (int i = 0; i < channel->nb_used_in_cnx; i++) {
         picoquic_mc_channel_in_cnx_t* ch = channel->used_in_cnx[i];
-        ch->mc_leave_scheduled = 1;
-        // ch->mc_retire_scheduled = 1;
+        if (ch->state < picoquic_mc_state_leave_pending && ch->mc_leave_scheduled == 0) {
+            ch->mc_leave_scheduled = 1;
+            scheduled = 1;
+        }
+        if (ch->state < picoquic_mc_state_retire_pending && ch->mc_retire_scheduled == 0) {
+            scheduled = 1;
+            ch->mc_retire_scheduled = 1;
+        }
     }
-    channel->is_retiring = 1;
-    fprintf(stdout, "MC_LEAVE (& MC_RETIRE) scheduled for %i clients\n", channel->nb_used_in_cnx);
+
+    if (scheduled) {
+        channel->is_retiring = 1;
+        fprintf(stdout, "MC_LEAVE (& MC_RETIRE) scheduled for %i clients\n", channel->nb_used_in_cnx);
+    }
 
     return 0;
 }

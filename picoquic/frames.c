@@ -7563,7 +7563,7 @@ const uint8_t* picoquic_decode_mc_state_frame(picoquic_cnx_t* cnx, const uint8_t
             fprintf(stdout, "Got MC_STATE(Joined) from client\n");
             channel_found->state = picoquic_mc_state_join_attempted;
         }
-        else if (channel_found->state >= picoquic_mc_state_leave_pending && channel_found->state < picoquic_mc_state_retire_pending && channel_found->mc_join_acked) {
+        else if (channel_found->state >= picoquic_mc_state_left && channel_found->state < picoquic_mc_state_retire_pending && channel_found->mc_join_acked) {
             // Half-illegal behavior: Leave pending or left, but received MC_JOIN in the past
             fprintf(stdout, "Notice: Client joins multicast channel directly after trying to leave or left\n");
             channel_found->state = picoquic_mc_state_join_attempted;
@@ -7581,7 +7581,7 @@ const uint8_t* picoquic_decode_mc_state_frame(picoquic_cnx_t* cnx, const uint8_t
             fprintf(stdout, "Got MC_STATE(Declined Join) from client\n");
             channel_found->state = picoquic_mc_state_left; 
         }
-        else if (channel_found->state >= picoquic_mc_state_join_attempted && channel_found->state < picoquic_mc_state_leave_pending) {
+        else if (channel_found->state >= picoquic_mc_state_join_attempted && channel_found->state < picoquic_mc_state_left) {
             // Half-illegal behavior: Client already in Join attempted or join confirmed
             fprintf(stdout, "Notice: Client declined joining multicast channel after confirming join. Let client leave the channel.\n");
             channel_found->state = picoquic_mc_state_left; 
@@ -7974,7 +7974,7 @@ const uint8_t* picoquic_decode_mc_integrity_frame(picoquic_cnx_t* cnx, const uin
         return picoquic_skip_mc_integrity_frame(bytes0, bytes_max, ftype);
     }
 
-    for (int number = pkt_nb_start; number <= pkt_nb_end; number++) {
+    for (uint64_t number = pkt_nb_start; number <= pkt_nb_end; number++) {
         if (already_received[number - pkt_nb_start] == 1) {
             bytes += hash_length;
             continue;
@@ -8201,8 +8201,8 @@ int picoquic_check_mc_integrity_needs_repeat(picoquic_cnx_t* cnx, const uint8_t*
 
         nb_hashes = floor(length_hashes / hash_len);
 
-        if (ch_in_cnx->state >= picoquic_mc_state_leave_pending) {
-            // If the client left the channel or intends to leave it, do not repeat
+        if (ch_in_cnx->state >= picoquic_mc_state_left) {
+            // If the client left the channel, do not repeat
             *no_need_to_repeat = 1;
         } else {
             // Check if frame is in ch_in_cnx->integrity_frames_acked

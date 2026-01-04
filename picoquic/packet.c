@@ -2515,7 +2515,7 @@ int picoquic_incoming_1rtt_multicast(
     int ret = 0;
 
     /* Check the packet */
-    if (ch_in_cnx->state >= picoquic_mc_state_leave_pending || ch_in_cnx->state <= picoquic_mc_state_join_pending) {
+    if (ch_in_cnx->state >= picoquic_mc_state_left || ch_in_cnx->state <= picoquic_mc_state_join_pending) {
         /* Not yet joined or leaving/left or channel retired -> Just ignore the packet */
         ret = PICOQUIC_ERROR_UNEXPECTED_PACKET;
     }

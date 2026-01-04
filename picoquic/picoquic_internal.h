@@ -2310,7 +2310,7 @@ picoquic_mc_channel_in_cnx_t* picoquic_find_multicast_channel_in_cnx(picoquic_mu
     picoquic_cnx_t* cnx);
 picoquic_multicast_channel_t* picoquic_find_multicast_channel_global(picoquic_multicast_channel_id_t * ch_id, 
     picoquic_quic_t* quic);
-int picoquic_need_to_send_multicast_integrity(picoquic_quic_t* quic, 
+int picoquic_need_to_send_multicast_frames(picoquic_quic_t* quic, 
     uint64_t threshold, uint64_t current_time, int64_t* delta_t);
 void picoquic_multicast_update_leave_retired_waiting(picoquic_mc_channel_in_cnx_t* ch_in_cnx);
 

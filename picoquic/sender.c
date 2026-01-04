@@ -3133,10 +3133,9 @@ uint8_t * picoquic_prepare_multicast_integrity_frames(picoquic_cnx_t* cnx, picoq
     }
 
     for (int i = 0; i < cnx->nb_mc_channels; i++) {
-        // TODO MC: Send MC_INTEGRITY frames for joined clients
         picoquic_mc_channel_in_cnx_t* ch = cnx->mc_channels[i];
         if (ch->state >= picoquic_mc_state_join_attempted 
-            && ch->state < picoquic_mc_state_leave_pending
+            && ch->state < picoquic_mc_state_left // ENHANCE MC: Clarify when MC_INTEGRITY frames still need to be sent
             && ch->channel->packet_integrity_first != NULL
             && ch->channel->packet_integrity_last != NULL
             && (ch->first_mc_integrity_sent == 0 || ch->mc_integrity_latest_pn_sent < ch->channel->packet_integrity_last->packet_number)
@@ -5548,6 +5547,7 @@ int picoquic_prepare_next_packet_ex(picoquic_quic_t* quic,
         picoquic_cnx_t* cnx = picoquic_get_earliest_cnx_to_wake(quic, current_time);
 
         if (cnx == NULL) {
+            fprintf(stdout, "No connection found to wake now\n");
             *send_length = 0;
         }
         else {

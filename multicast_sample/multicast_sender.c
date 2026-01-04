@@ -91,12 +91,12 @@ int multicast_sender_open_file(multicast_sender_ctx_t* sender_ctx)
     return ret;
 }
 
-/* Schedule MC_LEAVE and MC_RETIRE frame to all clients to retire the channel */
+/* Schedule MC_LEAVE and MC_RETIRE frame to all clients (if not already done) to retire the channel */
 void picoquic_multicast_sender_retire(multicast_sender_ctx_t* sender_ctx) {
-    fprintf(stdout, "Nothing more to send, close channel with MC_LEAVE and MC_RETIRE\n");
     picoquic_schedule_mc_leave_and_retire(sender_ctx->server_ctx->mc_channel);
 }
 
+/* Multicast application callback */
 int multicast_sender_callback(picoquic_multicast_channel_t* channel,
     uint64_t stream_id, uint8_t* bytes, size_t length,
     picoquic_call_back_event_t fin_or_event, void* callback_ctx, void* v_stream_ctx)
