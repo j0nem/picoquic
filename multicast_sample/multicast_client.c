@@ -351,7 +351,6 @@ static int multicast_client_init(char const *server_name, int server_port, char 
             picoquic_set_key_log_file_from_env(*quic);
             picoquic_set_qlog(*quic, qlog_dir);
             picoquic_set_log_level(*quic, 1);
-            picoquic_enable_path_callbacks_default(*quic, 1);
 
             // Multicast settings
             client_ctx->tp_params = malloc(sizeof(picoquic_tp_multicast_client_params_t));

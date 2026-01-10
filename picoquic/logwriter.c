@@ -584,7 +584,10 @@ static const uint8_t* picoquic_log_mc_integrity_frame(FILE* f, const uint8_t* by
 {
     const uint8_t* bytes_begin = bytes;
     bytes = picoquic_log_varint_skip(bytes, bytes_max);
-    bytes = picoquic_skip_mc_integrity_frame(bytes, bytes_max, ftype);     
+    // ENHANCE MC: Warning: This method assumes as hash length of 48 (as in SHA384)
+    // This can change when another hash algorithm is used and is a workaround because we have
+    // no cnx context available here currently.
+    bytes = picoquic_skip_mc_integrity_frame_assumed_hashlength(bytes, bytes_max, ftype, 48);     
     picoquic_binlog_frame(f, bytes_begin, bytes);
 
     return bytes;

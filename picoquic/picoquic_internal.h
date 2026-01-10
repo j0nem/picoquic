@@ -2338,8 +2338,10 @@ const uint8_t* picoquic_skip_mc_state_frame(const uint8_t* bytes,
     const uint8_t* bytes_max, uint64_t ftype);
 uint8_t* picoquic_format_mc_integrity_frame(uint8_t* bytes, 
     uint8_t* bytes_max, picoquic_mc_channel_in_cnx_t* ch_in_cnx, int * more_data);
-const uint8_t* picoquic_skip_mc_integrity_frame(const uint8_t* bytes, 
+const uint8_t* picoquic_skip_mc_integrity_frame(picoquic_cnx_t* cnx, const uint8_t* bytes, 
     const uint8_t* bytes_max, uint64_t ftype);
+const uint8_t* picoquic_skip_mc_integrity_frame_assumed_hashlength(const uint8_t* bytes, 
+    const uint8_t* bytes_max, uint64_t ftype, size_t hash_length);
 const uint8_t* picoquic_skip_mc_ack_frame(const uint8_t* bytes, 
     const uint8_t* bytes_max, int is_ecn);
 uint8_t* picoquic_format_mc_leave_frame(uint8_t* bytes, uint8_t* bytes_max, 

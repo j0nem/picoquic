@@ -7991,7 +7991,7 @@ const uint8_t* picoquic_decode_mc_integrity_frame(picoquic_cnx_t* cnx, const uin
 
     // If no new hashes in frame, skip
     if (nb_hashes == nb_already_received) {
-        return picoquic_skip_mc_integrity_frame(bytes0, bytes_max, ftype);
+        return picoquic_skip_mc_integrity_frame(cnx, bytes0, bytes_max, ftype);
     }
 
     for (uint64_t number = pkt_nb_start; number <= pkt_nb_end; number++) {
@@ -8051,26 +8051,76 @@ const uint8_t* picoquic_decode_mc_integrity_frame(picoquic_cnx_t* cnx, const uin
     return bytes;
 }
 
-const uint8_t* picoquic_skip_mc_integrity_frame(const uint8_t* bytes, const uint8_t* bytes_max, uint64_t ftype)
+const uint8_t* picoquic_skip_mc_integrity_frame(picoquic_cnx_t* cnx, const uint8_t* bytes, const uint8_t* bytes_max, uint64_t ftype)
 {
     if (ftype != picoquic_frame_type_mc_integrity_l && ftype != picoquic_frame_type_mc_integrity) {
         return NULL; 
     }
 
     // picoquic_frame_type_mc_integrity indicates that frame is extended until packet bounds
-    if (picoquic_frame_type_mc_integrity) {
+    if (ftype == picoquic_frame_type_mc_integrity) {
         bytes = bytes_max;
         return bytes;
     }
 
     uint8_t ch_id_length = 0;
-    uint64_t hashes_length = 0;
+    size_t hash_length = 0;
+    uint64_t nb_hashes = 0;
+
+    picoquic_multicast_channel_id_t ch_id;
+
+    if ((bytes = picoquic_frames_uint8_decode(bytes, bytes_max, &ch_id_length)) != NULL) // channel id length
+    {
+        uint8_t bytes_copied = picoquic_parse_multicast_channel_id(bytes, ch_id_length, &ch_id);
+        if (bytes_copied == 0) {
+            return NULL;
+        } else {
+            bytes += bytes_copied;
+        }
+
+        picoquic_mc_channel_in_cnx_t* channel_found = picoquic_find_multicast_channel_in_cnx(&ch_id, cnx);
+        
+        if (channel_found == NULL) {
+            return NULL;
+        }
+
+        size_t hash_length = picoquic_hash_get_length(channel_found->channel->hash_algorithm_name);
+        if (hash_length == 0) {
+            return NULL;
+        }
+    }
+
+    if ((bytes = picoquic_frames_varint_skip(bytes, bytes_max)) != NULL && // packet number start
+        (bytes = picoquic_frames_varint_decode(bytes, bytes_max, &nb_hashes)) != NULL)  // hashes length
+    {
+        bytes = picoquic_frames_fixed_skip(bytes, bytes_max, nb_hashes * hash_length); // hashes
+    }
+
+    return bytes;
+}
+
+// CHECK MC: This method assumes a certain hash length. Only use when cnx is not accessible (e.g. logging)
+// CAUTION: Beware that this does only works as long as the hash length is equal to the assumed hash length!
+const uint8_t* picoquic_skip_mc_integrity_frame_assumed_hashlength(const uint8_t* bytes, const uint8_t* bytes_max, uint64_t ftype, size_t hash_length)
+{
+    if (ftype != picoquic_frame_type_mc_integrity_l && ftype != picoquic_frame_type_mc_integrity) {
+        return NULL; 
+    }
+
+    // picoquic_frame_type_mc_integrity indicates that frame is extended until packet bounds
+    if (ftype == picoquic_frame_type_mc_integrity) {
+        bytes = bytes_max;
+        return bytes;
+    }
+
+    uint8_t ch_id_length = 0;
+    uint64_t nb_hashes = 0;
 
     if ((bytes = picoquic_frames_uint8_decode(bytes, bytes_max, &ch_id_length)) != NULL && // channel id length
         (bytes = picoquic_frames_fixed_skip(bytes, bytes_max, (uint64_t)ch_id_length)) != NULL && // channel id
         (bytes = picoquic_frames_varint_skip(bytes, bytes_max)) != NULL && // packet number start
-        (bytes = picoquic_frames_varint_decode(bytes, bytes_max, &hashes_length)) != NULL) { // hashes length
-            bytes = picoquic_frames_fixed_skip(bytes, bytes_max, hashes_length); // hashes
+        (bytes = picoquic_frames_varint_decode(bytes, bytes_max, &nb_hashes)) != NULL) { // hashes length
+            bytes = picoquic_frames_fixed_skip(bytes, bytes_max, nb_hashes * hash_length); // hashes
         }
 
     return bytes;
@@ -8102,7 +8152,7 @@ int picoquic_process_ack_of_mc_integrity_frame(picoquic_cnx_t* cnx, const uint8_
     bytes = picoquic_frames_fixed_skip(bytes, bytes_max, bytes_copied);
     picoquic_frames_varint_decode(bytes, bytes_max, &packet_number_start);
 
-    const uint8_t* bytes_next = picoquic_skip_mc_integrity_frame(bytes_after_ftype, bytes_max, ftype);
+    const uint8_t* bytes_next = picoquic_skip_mc_integrity_frame(cnx, bytes_after_ftype, bytes_max, ftype);
 
     if (bytes_next == NULL) {
         return -1;
@@ -9792,7 +9842,8 @@ int picoquic_skip_frame(const uint8_t* bytes, size_t bytes_maxsize, size_t* cons
                     break;
                 case picoquic_frame_type_mc_integrity:
                 case picoquic_frame_type_mc_integrity_l:
-                    bytes = picoquic_skip_mc_integrity_frame(bytes, bytes_max, frame_id64);
+                    // CHECK MC: Assumed hash length, this is not valid when different hash lengths are possible
+                    bytes = picoquic_skip_mc_integrity_frame_assumed_hashlength(bytes, bytes_max, frame_id64, 48);
                     *pure_ack = 0;
                     break;
                 case picoquic_frame_type_mc_ack:
