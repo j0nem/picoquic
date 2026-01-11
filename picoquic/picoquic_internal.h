@@ -1368,6 +1368,7 @@ typedef struct st_picoquic_multicast_channel_t {
     picoquic_multicast_packet_integrity_t* packet_integrity_last;
 
     /* Management of streams */
+    // CHECK MC: Currently no STREAM support in multicast
     picosplay_tree_t stream_tree;
     picoquic_stream_head_t * first_output_stream;
     picoquic_stream_head_t * last_output_stream;
@@ -1382,7 +1383,8 @@ typedef struct st_picoquic_multicast_channel_t {
 
     /* Management of datagram queue */
     unsigned int is_datagram_ready : 1; /* Active polling for datagrams */
-    picoquic_misc_frame_header_t* first_datagram; // CLEAN MC: Is first_datagram and last_datagram needed?
+    // ENHANCE MC: Add support for queuing multicast datagrams (currently only JIT API available)
+    picoquic_misc_frame_header_t* first_datagram;
     picoquic_misc_frame_header_t* last_datagram;
     uint64_t datagram_priority;
     int datagram_conflicts_count;
@@ -1448,7 +1450,6 @@ typedef struct st_picoquic_mc_channel_in_cnx_t {
     struct mcrx_subscription* mcrx_subscription;
 
     // ack context
-    // TODO MC: Write to this context so that duplicate receive detection works
     picoquic_ack_context_t ack_ctx;
 
     // the following is used on server only:

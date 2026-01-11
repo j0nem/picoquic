@@ -632,10 +632,6 @@ int picoquic_prepare_transport_extensions(picoquic_cnx_t* cnx, int extension_mod
             bytes = picoquic_transport_param_type_flag_encode(bytes, bytes_max, picoquic_tp_multicast_server_support);
         } else {
             bytes = picoquic_encode_transport_param_multicast_client_params(bytes, bytes_max, &cnx->local_parameters.multicast_client_params);
-            // CLEAN MC: Debug prints
-            // uint8_t* bytes_before = bytes;
-            // int length = bytes - bytes_before;
-            // print_bits(bytes_before, length);
         }
     }
 

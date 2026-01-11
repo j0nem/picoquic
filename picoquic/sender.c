@@ -4511,8 +4511,6 @@ int picoquic_generate_packet_hash_multicast(picoquic_multicast_channel_t* channe
     
     // CLEAN MC: Remove debug output
     fprintf(stdout, "Generated %s hash for packet no %li\n", channel->hash_algorithm_name, pi_new->packet_number);
-    // print_hex_bytes(pi_new->hash, hash_length);
-    // fprintf(stdout, "\n");
 
     // Indicate that this element can now be used by concurrently running processes
     pi_new->is_active = 1;
@@ -5205,7 +5203,6 @@ int picoquic_prepare_packet_multicast(picoquic_multicast_channel_t* channel,
                     packet_size += segment_length;
                     if (packet->length == 0) {
                         /* Nothing more to send */
-                        // TODO MC: Fix occasionally occuring double frees with recycle_packet
                         picoquic_recycle_packet_multicast(channel, packet);
                     }
                     else if (segment_length == 0) {

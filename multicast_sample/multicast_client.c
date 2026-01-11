@@ -421,7 +421,7 @@ static int multicast_client_init(char const *server_name, int server_port, char 
  *       if there is, send it.
  * - The loop breaks if the client connection is finished.
  */
-int picoquic_multicast_client(char const *server_name, int server_port, char const *default_dir, int max_rate)
+int multicast_client(char const *server_name, int server_port, char const *default_dir, int max_rate)
 {
     int ret = 0;
     struct sockaddr_storage server_address;

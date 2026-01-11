@@ -934,7 +934,7 @@ picoquic_multicast_channel_t* picoquic_find_multicast_channel_global(picoquic_mu
 // Find out if served channels have active joined multicast receivers that need 
 // `MC_INTEGRITY`/`MC_LEAVE`/`MC_RETIRE` or other multicast control frames to be sent via unicast
 // If yes, set delta_t lower for more frequent checking
-// If `MC_INTEGRITY` sending is at least some frames behind (defined by threshold), wake the cnx and set delta_t to zero
+// If `MC_INTEGRITY` sending is at most a few frames behind (defined by threshold), wake the cnx and set delta_t to zero
 int picoquic_wake_for_multicast_frames(picoquic_quic_t* quic, uint64_t threshold, uint64_t current_time, int64_t* delta_t) {
     if (quic->nb_mc_channels == 0) {
         return 0;
@@ -969,7 +969,7 @@ int picoquic_wake_for_multicast_frames(picoquic_quic_t* quic, uint64_t threshold
 
                     // Real Wake: Wake cnx if we really know that we need to send something (integrity, leave or retire frame)
                     if ((channel->packet_integrity_last != NULL && ch_in_cnx->mc_integrity_latest_pn_sent < channel->packet_integrity_last->packet_number)
-                        || ch_in_cnx->mc_leave_scheduled) {
+                        || ch_in_cnx->mc_leave_scheduled || ch_in_cnx->mc_retire_scheduled) {
                             ch_in_cnx->last_time_woken = current_time;
                             picoquic_reinsert_by_wake_time(quic, ch_in_cnx->cnx, current_time);
                     // Threshold wake: Also wake a few more times if the last real wake was not too long ago, to make sure we really 
@@ -1043,16 +1043,6 @@ int picoquic_create_multicast_channel(picoquic_quic_t* quic, picoquic_multicast_
     new_channel->max_ack_delay = PICOQUIC_ACK_DELAY_MAX;
     new_channel->quic = quic;
     new_channel->send_mtu = PICOQUIC_INITIAL_MTU_IPV4; // change when ipv6 is supported
-
-    // CLEAN MC: Remove if not needed
-    // if (new_channel->mc_tls_ctx == NULL) {
-    //     /* Only initialize TLS after all parameters have been set */
-    //     if (picoquic_tlscontext_create_mc(quic, new_channel, 0) != 0) {
-    //         // TODO MC: Delete channel
-    //         // picoquic_delete_mc_channel(new_channel);
-    //         // new_channel = NULL;
-    //     }
-    // }
 
     picoquic_compute_multicast_secrets(quic, new_channel);
 
@@ -1243,8 +1233,6 @@ void picoquic_multicast_update_leave_retired_waiting(picoquic_mc_channel_in_cnx_
     uint64_t highest_verified = picoquic_multicast_get_latest_packet_number_verified(ch_in_cnx->channel);
     uint64_t timeout = 3000000; // CHECK MC: Shortcut: If desired packet number is not arriving 3 seconds after MC_LEAVE, just leave
 
-    // TODO MC: Improve this check here so that not only the highest packet number verified is checked when leaving,
-    // but also, if all packets before were already received and verified (sometimes older packages arrive late)
     if (ch_in_cnx->state == picoquic_mc_state_retire_waiting && 
         ((highest_verified < UINT64_MAX && highest_verified >= ch_in_cnx->retire_after_packet_number) || ch_in_cnx->retire_received_at + timeout <= current_time)
     ) {

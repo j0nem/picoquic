@@ -8482,7 +8482,7 @@ uint8_t* picoquic_format_mc_ack_frame(picoquic_mc_channel_in_cnx_t* channel, uin
         }
     }
 
-    if (bytes > after_stamp){ // TODO MC: Fix this: currently, bytes == after_stamp, which should not be the case
+    if (bytes > after_stamp){
         fprintf(stdout, "Send MC_ACK\n");
         
         if (is_opportunistic) {
@@ -9074,23 +9074,6 @@ int picoquic_decode_frames_multicast(picoquic_mc_channel_in_cnx_t* ch_in_cnx, co
                         // TODO MC: Support MC_KEY frame via multicast
                         // bytes = picoquic_decode_mc_key_frame(cnx, bytes, bytes_max); 
                         ack_needed = 1;
-
-                        // CLEAN MC: Refactor event/error logging to qlog
-                        // if (bytes != NULL) {
-                        //     picoquic_multicast_channel_t* channel = cnx->mc_channels[cnx->nb_mc_channels-1]->channel;
-
-                        //     picoquic_multicast_aead_secret_t* aead = channel->aead_secrets[channel->nb_aead_secrets-1];
-                        //     fprintf(stdout, "Got MC_KEY frame for channel id ");
-                        //     print_hex_bytes(channel->channel_id.id, channel->channel_id.id_len);
-
-                        //     fprintf(stdout, "\n -- Key Sequence number: %lu\n", aead->key_seq_number);
-                        //     fprintf(stdout, " -- From Packet number: %lu\n", aead->from_pkt_number);
-                        //     fprintf(stdout, " -- Secret length: %lu\n", aead->secret_len);
-                        // } 
-                        // if (bytes == NULL) {
-                        //     fprintf(stdout, "ERROR: bytes == NULL after decoding MC_KEY frame\n");
-                        // }
-                        
                         break;
                     default:
                         /* Not implemented yet! */
@@ -9462,16 +9445,6 @@ int picoquic_decode_frames(picoquic_cnx_t* cnx, picoquic_path_t * path_x, const 
                             bytes = picoquic_decode_mc_state_frame(cnx, bytes, bytes_max, frame_id64); 
                             ack_needed = 1;
 
-                            // CLEAN MC: Refactor event/error logging to qlog
-                            // if (bytes != NULL) {
-                            //     picoquic_multicast_channel_t* channel = cnx->mc_channels[cnx->nb_mc_channels-1]->channel;
-                            //     picoquic_mc_channel_in_cnx_t* ch_in_cnx = picoquic_find_multicast_channel_in_cnx(&channel->channel_id, cnx);
-
-                            //     fprintf(stdout, " -- Channel id ");
-                            //     print_hex_bytes(channel->channel_id.id, channel->channel_id.id_len);
-                            //     fprintf(stdout, "\n -- State Seq number: %lu\n", ch_in_cnx->latest_state_sequence_available);
-                            //     fprintf(stdout, " -- New state (picoquic-internal-code): %u\n", ch_in_cnx->state);
-                            // } 
                             if (bytes == NULL) {
                                 fprintf(stdout, "ERROR: bytes == NULL after decoding MC_STATE frame\n");
                             }

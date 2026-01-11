@@ -756,7 +756,6 @@ static int monitor_system_call_duration(packet_loop_system_call_duration_t* sc_d
 /* 
  * Socket loop for multicast sender. No receiving, minimal logic, only sends data to multicast group address.
  * No support for Windows for now.
- * // TODO MC: Change this, so that it only sends data for specified multicast channel
  */
 void* picoquic_packet_loop_multicast_send(void* v_ctx)
 {
