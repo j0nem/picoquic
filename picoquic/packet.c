@@ -2515,7 +2515,7 @@ int picoquic_incoming_1rtt_multicast(
     int ret = 0;
 
     /* Check the packet */
-    if (ch_in_cnx->state >= picoquic_mc_state_leave_pending || ch_in_cnx->state <= picoquic_mc_state_join_pending) {
+    if (ch_in_cnx->state >= picoquic_mc_state_left || ch_in_cnx->state <= picoquic_mc_state_join_pending) {
         /* Not yet joined or leaving/left or channel retired -> Just ignore the packet */
         ret = PICOQUIC_ERROR_UNEXPECTED_PACKET;
     }
@@ -3032,7 +3032,6 @@ int picoquic_incoming_segment(
         if (cnx != NULL && mc_ch_in_cnx == NULL && cnx->cnx_state != picoquic_state_disconnected &&
             ph.ptype != picoquic_packet_version_negotiation) {
             cnx->nb_packets_received++;
-            // TODO MC: Make sure that this is reached in multicast setting, to avoid idle timeout
             cnx->latest_receive_time = current_time;
             /* Mark the sequence number as received */
             ret = picoquic_record_pn_received(cnx, ph.pc, ph.l_cid, ph.pn64, receive_time);

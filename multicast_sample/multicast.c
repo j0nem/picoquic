@@ -80,7 +80,7 @@ int main(int argc, char** argv)
         else {
             int server_port = get_port(argv[0], argv[3]);
             int max_rate = atoi(argv[5]);
-            exit_code = picoquic_multicast_client(argv[2], server_port, argv[4], max_rate);
+            exit_code = multicast_client(argv[2], server_port, argv[4], max_rate);
         }
     }
     else if (strcmp(argv[1], "server") == 0) {
@@ -97,7 +97,7 @@ int main(int argc, char** argv)
                 client_threshold = atoi(argv[8]);
             }
 
-            exit_code = picoquic_multicast_server(server_port, sender_port, argv[4], argv[5], max_rate, argv[7], client_threshold);
+            exit_code = multicast_server(server_port, sender_port, argv[4], argv[5], max_rate, argv[7], client_threshold);
         }
     }
     else

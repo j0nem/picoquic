@@ -355,6 +355,12 @@ char const* textlog_frame_names(uint64_t frame_type)
     case picoquic_frame_type_mc_join:
         frame_name = "mc_join";
         break;
+    case picoquic_frame_type_mc_leave:
+        frame_name = "mc_leave";
+        break;
+    case picoquic_frame_type_mc_retire:
+        frame_name = "mc_retire";
+        break;
     case picoquic_frame_type_mc_state_multicast:
         frame_name = "mc_state_multicast";
         break;

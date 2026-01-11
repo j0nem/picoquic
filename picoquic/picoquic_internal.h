@@ -1362,11 +1362,13 @@ typedef struct st_picoquic_multicast_channel_t {
     picoquic_packet_context_t pkt_ctx; /* Packet context */
     unsigned int key_phase : 1; /* Key phase used in outgoing packets */
     unsigned int current_spin : 1;
+    uint64_t latest_packet_number_received; // Used on client only
 
     picoquic_multicast_packet_integrity_t* packet_integrity_first;
     picoquic_multicast_packet_integrity_t* packet_integrity_last;
 
     /* Management of streams */
+    // CHECK MC: Currently no STREAM support in multicast
     picosplay_tree_t stream_tree;
     picoquic_stream_head_t * first_output_stream;
     picoquic_stream_head_t * last_output_stream;
@@ -1381,7 +1383,8 @@ typedef struct st_picoquic_multicast_channel_t {
 
     /* Management of datagram queue */
     unsigned int is_datagram_ready : 1; /* Active polling for datagrams */
-    picoquic_misc_frame_header_t* first_datagram; // CLEAN MC: Is first_datagram and last_datagram needed?
+    // ENHANCE MC: Add support for queuing multicast datagrams (currently only JIT API available)
+    picoquic_misc_frame_header_t* first_datagram;
     picoquic_misc_frame_header_t* last_datagram;
     uint64_t datagram_priority;
     int datagram_conflicts_count;
@@ -1412,12 +1415,18 @@ typedef enum {
     // -> acknowledging first data on the multicast channel
     picoquic_mc_state_join_confirmed = 10,
 
+    // After receiving MC_LEAVE on client, but still receiving data until last packet has been received
+    picoquic_mc_state_leave_waiting = 13,
+
     // After sending/receiving MC_LEAVE
     picoquic_mc_state_leave_pending = 15,
 
     // After sending (client) or receiving (server) MC_STATE(Left)
     // OR MC_STATE(Declined Join)
     picoquic_mc_state_left = 20,
+
+    // After receiving MC_RETIRE on client, but still receiving data until last packet has been received
+    picoquic_mc_state_retire_waiting = 23,
 
     // After receiving (client) or sending (server) MC_RETIRE
     picoquic_mc_state_retire_pending = 25,
@@ -1434,16 +1443,13 @@ typedef struct st_picoquic_mc_channel_in_cnx_t {
     picoquic_multicast_channel_t* channel;
     picoquic_cnx_t* cnx;
     picoquic_mc_state_enum state;
-    int key_available;
-    int state_frame_available;
-    int limits_frame_available;
+    // CHECK MC: Key sequence numbers are implicitly 0 before the first frame, and 1 when the first frame sent/arrived
     uint64_t latest_key_sequence_available;
     uint64_t latest_state_sequence_available;
     uint64_t latest_limits_sequence_available;
     struct mcrx_subscription* mcrx_subscription;
 
     // ack context
-    // TODO MC: Write to this context so that duplicate receive detection works
     picoquic_ack_context_t ack_ctx;
 
     // the following is used on server only:
@@ -1454,6 +1460,7 @@ typedef struct st_picoquic_mc_channel_in_cnx_t {
     int key_acked;                                              // At least one MC_KEY frame was acked
     int mc_leave_scheduled;
     int mc_retire_scheduled;
+    uint64_t last_time_woken;                                        // When this cnx was last woken for sending multicast frames on unicast in the socket loop
     uint64_t latest_key_sequence_acked;
     int first_mc_integrity_sent;                                // sent at least one mc_integrity frame (needed bc the first packet no is 0)
     uint64_t mc_integrity_latest_pn_sent;                       // latest *multicast* packet number for which an integrity hash was sent
@@ -1470,6 +1477,10 @@ typedef struct st_picoquic_mc_channel_in_cnx_t {
     int mc_limits_acked;                // At least one MC_LIMITS frame was acked
     uint64_t latest_state_sequence_acked;
     uint64_t latest_limits_sequence_acked;
+    uint64_t leave_after_packet_number; // Send STATE(Left) after this packet number has been received
+    uint64_t retire_after_packet_number; // Send STATE(Retired) after this packet number has been received
+    uint64_t leave_received_at;          // current_time when MC_LEAVE arrived (for timeout)
+    uint64_t retire_received_at;         // current_time when MC_RETIRE arrived (for timeout)
     uint64_t crypto_failure_count;
     picoquic_multicast_packet_t* awaiting_integrity_check_first;
     picoquic_multicast_packet_t* awaiting_integrity_check_last;
@@ -2303,8 +2314,10 @@ picoquic_mc_channel_in_cnx_t* picoquic_find_multicast_channel_in_cnx(picoquic_mu
     picoquic_cnx_t* cnx);
 picoquic_multicast_channel_t* picoquic_find_multicast_channel_global(picoquic_multicast_channel_id_t * ch_id, 
     picoquic_quic_t* quic);
-int picoquic_need_to_send_multicast_integrity(picoquic_quic_t* quic, 
+int picoquic_wake_for_multicast_frames(picoquic_quic_t* quic, 
     uint64_t threshold, uint64_t current_time, int64_t* delta_t);
+void picoquic_multicast_update_leave_retired_waiting(picoquic_mc_channel_in_cnx_t* ch_in_cnx, uint64_t current_time);
+uint64_t picoquic_multicast_get_latest_packet_number_verified(picoquic_multicast_channel_t* channel);
 
 picoquic_mc_channel_in_cnx_t* picoquic_add_channel_to_cnx(picoquic_cnx_t* cnx, 
     picoquic_multicast_channel_t* channel);
@@ -2326,10 +2339,16 @@ const uint8_t* picoquic_skip_mc_state_frame(const uint8_t* bytes,
     const uint8_t* bytes_max, uint64_t ftype);
 uint8_t* picoquic_format_mc_integrity_frame(uint8_t* bytes, 
     uint8_t* bytes_max, picoquic_mc_channel_in_cnx_t* ch_in_cnx, int * more_data);
-const uint8_t* picoquic_skip_mc_integrity_frame(const uint8_t* bytes, 
+const uint8_t* picoquic_skip_mc_integrity_frame(picoquic_cnx_t* cnx, const uint8_t* bytes, 
     const uint8_t* bytes_max, uint64_t ftype);
+const uint8_t* picoquic_skip_mc_integrity_frame_assumed_hashlength(const uint8_t* bytes, 
+    const uint8_t* bytes_max, uint64_t ftype, size_t hash_length);
 const uint8_t* picoquic_skip_mc_ack_frame(const uint8_t* bytes, 
     const uint8_t* bytes_max, int is_ecn);
+uint8_t* picoquic_format_mc_leave_frame(uint8_t* bytes, uint8_t* bytes_max, 
+    picoquic_mc_channel_in_cnx_t* ch_in_cnx, int * more_data);
+const uint8_t* picoquic_skip_mc_leave_frame(const uint8_t* bytes, 
+    const uint8_t* bytes_max);
 
 int picoquic_is_ack_needed_multicast(picoquic_cnx_t* cnx, uint64_t current_time, uint64_t* next_wake_time,
     int is_opportunistic);

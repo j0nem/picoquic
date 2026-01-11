@@ -1520,7 +1520,7 @@ int picoquic_compute_multicast_secrets(picoquic_quic_t * quic, picoquic_multicas
     picoquic_setup_multicast_crypto_context_header(quic, &channel->header_secret, &channel->crypto_context, channel->header_protection_algorithm, 1);
     picoquic_setup_multicast_crypto_context_aead(quic, new_aead_secret, &channel->crypto_context, channel->aead_algorithm, 1);
 
-    new_aead_secret->key_seq_number = 0;
+    new_aead_secret->key_seq_number = 1; // starts with 1
     new_aead_secret->from_pkt_number = 0;
 
     channel->aead_secrets[channel->nb_aead_secrets] = new_aead_secret;
@@ -2061,54 +2061,6 @@ int picoquic_tlscontext_create(picoquic_quic_t* quic, picoquic_cnx_t* cnx, uint6
 
     return ret;
 }
-
-/*
- * Creation of a TLS context for multicast
- */
-// CLEAN MC: Is this even needed?
-// int picoquic_tlscontext_create_mc(picoquic_quic_t* quic, picoquic_multicast_channel_t* channel, unsigned int client_mode)
-// {
-//     int ret = 0;
-//     /* allocate a context structure, but only if checks are correct */
-//     picoquic_tls_ctx_t* ctx = NULL;
-
-//     if (!client_mode && ((ptls_context_t*)quic->tls_master_ctx)->encrypt_ticket == NULL) {
-//         /* A server side connection, but no cert/key where given for the master context */
-//         ret = PICOQUIC_ERROR_TLS_SERVER_CON_WITHOUT_CERT;
-//     }
-//     else {
-//         ctx = (picoquic_tls_ctx_t*)malloc(sizeof(picoquic_tls_ctx_t));
-//         if (ctx == NULL) {
-//             ret = PICOQUIC_ERROR_MEMORY;
-//         }
-//     }
-
-//     /* Create the TLS context */
-//     if (ctx != NULL) {
-//         memset(ctx, 0, sizeof(picoquic_tls_ctx_t));
-//         ctx->ext_data_size = PICOQUIC_TRANSPORT_PARAMETERS_MAX_SIZE;
-//         if (!client_mode && quic->test_large_server_flight) {
-//             ctx->ext_data_size += 4096;
-//         }
-//         ctx->ext_data = (uint8_t*)malloc(ctx->ext_data_size);
-//         ctx->alpn_vec = (ptls_iovec_t*)malloc(sizeof(ptls_iovec_t) * PICOQUIC_ALPN_NUMBER_MAX);
-//         if (ctx->ext_data == NULL || ctx->alpn_vec == NULL) {
-//             ret = -1;
-//         }
-//         else {
-//             ctx->alpn_vec_size = PICOQUIC_ALPN_NUMBER_MAX;
-//             ctx->client_mode = client_mode;
-//         }
-//     }
-
-//     if (channel->mc_tls_ctx != NULL) {
-//         picoquic_tlscontext_free(channel->mc_tls_ctx);
-//     }
-
-//     channel->mc_tls_ctx = (void*)ctx;
-
-//     return ret;
-// }
 
 /* Set the log event to record keys for use by Wireshark.
  */

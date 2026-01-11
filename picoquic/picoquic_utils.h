@@ -86,11 +86,14 @@ char* picoquic_string_duplicate(const char* original);
 char* picoquic_string_free(char* str);
 int picoquic_sprintf(char* buf, size_t buf_len, size_t * nb_chars, const char* fmt, ...);
 
+typedef struct st_picoquic_multicast_packet_integrity_t picoquic_multicast_packet_integrity_t;
+
 extern const picoquic_connection_id_t picoquic_null_connection_id;
 uint8_t picoquic_format_connection_id(uint8_t* bytes, size_t bytes_max, picoquic_connection_id_t cnx_id);
 uint8_t picoquic_parse_connection_id(const uint8_t* bytes, uint8_t len, picoquic_connection_id_t *cnx_id);
 uint8_t picoquic_format_multicast_channel_id(uint8_t* bytes, size_t bytes_max, picoquic_multicast_channel_id_t* ch_id);
 uint8_t picoquic_parse_multicast_channel_id(const uint8_t * bytes, uint8_t len, picoquic_multicast_channel_id_t * ch_id);
+void picoquic_multicast_integrity_merge_sort(picoquic_multicast_packet_integrity_t** head_ref);
 int picoquic_is_connection_id_null(const picoquic_connection_id_t * cnx_id);
 int picoquic_compare_connection_id(const picoquic_connection_id_t * cnx_id1, const picoquic_connection_id_t * cnx_id2);
 uint64_t picoquic_connection_id_hash(const picoquic_connection_id_t * cid, const uint8_t * hash_seed);

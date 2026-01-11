@@ -206,10 +206,12 @@ int multicast_client_callback(picoquic_cnx_t *cnx,
             break;
         case picoquic_callback_stateless_reset:
             fprintf(stdout, "app: Received a stateless reset.\n");
-            break;
         case picoquic_callback_close:
             fprintf(stdout, "app: Received request to close connection\n");
-            break;
+        case picoquic_callback_multicast_left:
+            fprintf(stdout, "app: Left the multicast channel, stop receiving\n");
+        case picoquic_callback_multicast_retired:
+            fprintf(stdout, "app: Retired the multicast client, stop receiving\n");
         case picoquic_callback_application_close:
             fprintf(stdout, "app: Received request to close application.\n");
             /* Remove the application callback */
@@ -349,7 +351,6 @@ static int multicast_client_init(char const *server_name, int server_port, char 
             picoquic_set_key_log_file_from_env(*quic);
             picoquic_set_qlog(*quic, qlog_dir);
             picoquic_set_log_level(*quic, 1);
-            picoquic_enable_path_callbacks_default(*quic, 1);
 
             // Multicast settings
             client_ctx->tp_params = malloc(sizeof(picoquic_tp_multicast_client_params_t));
@@ -420,7 +421,7 @@ static int multicast_client_init(char const *server_name, int server_port, char 
  *       if there is, send it.
  * - The loop breaks if the client connection is finished.
  */
-int picoquic_multicast_client(char const *server_name, int server_port, char const *default_dir, int max_rate)
+int multicast_client(char const *server_name, int server_port, char const *default_dir, int max_rate)
 {
     int ret = 0;
     struct sockaddr_storage server_address;

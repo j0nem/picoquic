@@ -3133,10 +3133,9 @@ uint8_t * picoquic_prepare_multicast_integrity_frames(picoquic_cnx_t* cnx, picoq
     }
 
     for (int i = 0; i < cnx->nb_mc_channels; i++) {
-        // TODO MC: Send MC_INTEGRITY frames for joined clients
         picoquic_mc_channel_in_cnx_t* ch = cnx->mc_channels[i];
         if (ch->state >= picoquic_mc_state_join_attempted 
-            && ch->state < picoquic_mc_state_leave_pending
+            && ch->state < picoquic_mc_state_left // ENHANCE MC: Clarify when MC_INTEGRITY frames still need to be sent
             && ch->channel->packet_integrity_first != NULL
             && ch->channel->packet_integrity_last != NULL
             && (ch->first_mc_integrity_sent == 0 || ch->mc_integrity_latest_pn_sent < ch->channel->packet_integrity_last->packet_number)
@@ -3177,15 +3176,14 @@ uint8_t * picoquic_prepare_multicast_init_frames(picoquic_cnx_t* cnx, picoquic_p
         }
         
         // send MC_KEY of latest AEAD key if no key was sent on this cnx yet
-        if (ch->key_available < 1 && ch->latest_key_sequence_available == 0 && ch->channel->nb_aead_secrets > 0) {
-            int key_sequence_number = ch->channel->nb_aead_secrets - 1;
+        if (ch->latest_key_sequence_available == 0 && ch->channel->nb_aead_secrets > 0) {
+            int key_sequence_number = ch->channel->nb_aead_secrets;
             picoquic_multicast_aead_secret_t* aead = ch->channel->aead_secrets[ch->channel->nb_aead_secrets-1];
 
             uint8_t *bytes_next = picoquic_format_mc_key_frame(bytes, bytes_max, ch->channel, aead, more_data);
             if (bytes_next > bytes) {
                 *is_pure_ack = 0;
                 bytes = bytes_next;
-                ch->key_available = 1;
                 ch->latest_key_sequence_available = key_sequence_number;
             }
         }
@@ -3225,22 +3223,24 @@ uint8_t * picoquic_prepare_multicast_leave_retire_frames(picoquic_cnx_t* cnx,
         if (ch->state < picoquic_mc_state_retire_pending) {
             // if channel leave or retire scheduled
             if (ch->state < picoquic_mc_state_leave_pending && (ch->mc_leave_scheduled || ch->mc_retire_scheduled)) {
-                // TODO MC: Implement MC_LEAVE frame
-                // uint8_t *bytes_next = picoquic_format_mc_leave_frame(bytes, bytes_max, ch->channel, more_data);
-                // if (bytes_next > bytes) {
-                //     *is_pure_ack = 0;
-                //     bytes = bytes_next;
-                //     ch->state = picoquic_mc_state_leave_pending; 
-                // }
+                fprintf(stdout, "Prepare MC_LEAVE frame\n");
+                uint8_t *bytes_next = picoquic_format_mc_leave_frame(bytes, bytes_max, ch, more_data);
+                if (bytes_next > bytes) {
+                    *is_pure_ack = 0;
+                    bytes = bytes_next;
+                    ch->state = picoquic_mc_state_leave_pending; 
+                    ch->mc_leave_scheduled = 0;
+                }
             }
             // if channel retire scheduled
             if (ch->mc_retire_scheduled) {
                 // TODO MC: Implement MC_RETIRE frame
-                // uint8_t *bytes_next = picoquic_format_mc_retire_frame(bytes, bytes_max, ch->channel, more_data);
+                // uint8_t *bytes_next = picoquic_format_mc_retire_frame(bytes, bytes_max, ch, more_data);
                 // if (bytes_next > bytes) {
                 //     *is_pure_ack = 0;
                 //     bytes = bytes_next;
                 //     ch->state = picoquic_mc_state_retire_pending; 
+                //     ch->mc_retire_scheduled = 0;
                 // }
             }
         }
@@ -3291,8 +3291,11 @@ uint8_t * picoquic_prepare_multicast_state_frames(picoquic_cnx_t* cnx,
     for (int i = 0; i < cnx->nb_mc_channels; i++) {
         picoquic_mc_channel_in_cnx_t* ch = cnx->mc_channels[i];
 
+        // If waiting for leaving/retiring channel as client, see if timeout is reached
+        picoquic_multicast_update_leave_retired_waiting(ch, current_time);
+
         // if in state "join pending" and MC_KEY received -> check if client can join
-        if (ch->state >= picoquic_mc_state_join_pending && ch->state < picoquic_mc_state_join_attempted && ch->key_available > 0) {
+        if (ch->state >= picoquic_mc_state_join_pending && ch->state < picoquic_mc_state_join_attempted && ch->latest_key_sequence_available > 0) {
             nb_channels_join_pending++;
             picoquic_tp_multicast_client_params_t* params = &cnx->local_parameters.multicast_client_params;
 
@@ -3312,29 +3315,29 @@ uint8_t * picoquic_prepare_multicast_state_frames(picoquic_cnx_t* cnx,
                 // Callback to application to decide whether the join should happen or not
                 cnx->callback_fn(cnx, 0, NULL, 0, picoquic_callback_multicast_join_possible, cnx->callback_ctx, &ch->channel->channel_id);
             }
+        }
             
-            // Send scheduled state frame (e.g. desired by application)
-            if (ch->state_scheduled != 0 && ch->state_frame_scheduled != 0 && ch->state_scheduled != ch->state) {
-                picoquic_frame_type_enum_t ftype = picoquic_frame_type_mc_state_multicast;
-                if (ch->state_reason_scheduled > picoquic_mc_state_reason_limit_violation) {
-                    ftype = picoquic_frame_type_mc_state_application;
-                }
-                uint8_t *bytes_next = picoquic_format_mc_state_frame(bytes, bytes_max, ch, more_data,
-                    ftype,
-                    ch->state_frame_scheduled,
-                    ch->state_reason_scheduled);
+        // Send scheduled state frame (e.g. desired by application)
+        if (ch->state_scheduled != 0 && ch->state_frame_scheduled != 0 && ch->state_scheduled != ch->state) {
+            fprintf(stdout, "Format MC_STATE frame\n");
+            picoquic_frame_type_enum_t ftype = picoquic_frame_type_mc_state_multicast;
+            if (ch->state_reason_scheduled > picoquic_mc_state_reason_limit_violation) {
+                ftype = picoquic_frame_type_mc_state_application;
+            }
+            uint8_t *bytes_next = picoquic_format_mc_state_frame(bytes, bytes_max, ch, more_data,
+                ftype,
+                ch->state_frame_scheduled,
+                ch->state_reason_scheduled);
 
-                if (bytes_next > bytes) {
-                    *is_pure_ack = 0;
-                    bytes = bytes_next;
-                    ch->state = ch->state_scheduled; 
-                    ch->state_frame_scheduled = 0;
-                    ch->state_reason_scheduled = 0;
-                    ch->state_scheduled = 0;
-                }
+            if (bytes_next > bytes) {
+                *is_pure_ack = 0;
+                bytes = bytes_next;
+                ch->state = ch->state_scheduled; 
+                ch->state_frame_scheduled = 0;
+                ch->state_reason_scheduled = 0;
+                ch->state_scheduled = 0;
             }
         }
-        // TODO MC: Implement handling of other states -> sending appropriate MC_STATE frames
     }
 
     return bytes;
@@ -4508,8 +4511,6 @@ int picoquic_generate_packet_hash_multicast(picoquic_multicast_channel_t* channe
     
     // CLEAN MC: Remove debug output
     fprintf(stdout, "Generated %s hash for packet no %li\n", channel->hash_algorithm_name, pi_new->packet_number);
-    // print_hex_bytes(pi_new->hash, hash_length);
-    // fprintf(stdout, "\n");
 
     // Indicate that this element can now be used by concurrently running processes
     pi_new->is_active = 1;
@@ -5202,7 +5203,6 @@ int picoquic_prepare_packet_multicast(picoquic_multicast_channel_t* channel,
                     packet_size += segment_length;
                     if (packet->length == 0) {
                         /* Nothing more to send */
-                        // TODO MC: Fix occasionally occuring double frees with recycle_packet
                         picoquic_recycle_packet_multicast(channel, packet);
                     }
                     else if (segment_length == 0) {

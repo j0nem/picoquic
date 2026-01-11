@@ -1421,3 +1421,49 @@ void print_hex_bytes(const uint8_t *data, size_t len) {
         printf("%02X ", data[i]);
     }
 }
+
+void picoquic_multicast_integrity_split_list(picoquic_multicast_packet_integrity_t *source, picoquic_multicast_packet_integrity_t **front, picoquic_multicast_packet_integrity_t **back) {
+    picoquic_multicast_packet_integrity_t *slow = source;
+    picoquic_multicast_packet_integrity_t *fast = (picoquic_multicast_packet_integrity_t *)source->next;
+
+    while (fast) {
+        fast = (picoquic_multicast_packet_integrity_t *)fast->next;
+        if (fast) {
+            slow = (picoquic_multicast_packet_integrity_t *)slow->next;
+            fast = (picoquic_multicast_packet_integrity_t *)fast->next;
+        }
+    }
+
+    *front = source;
+    *back = (picoquic_multicast_packet_integrity_t *)slow->next;
+    slow->next = NULL;
+}
+
+picoquic_multicast_packet_integrity_t *picoquic_multicast_integrity_sorted_merge(picoquic_multicast_packet_integrity_t *a, picoquic_multicast_packet_integrity_t *b) {
+    if (!a) return b;
+    if (!b) return a;
+
+    if (a->packet_number <= b->packet_number) {
+        a->next = (struct picoquic_multicast_packet_integrity_t *)picoquic_multicast_integrity_sorted_merge((picoquic_multicast_packet_integrity_t *)a->next, b);
+        return a;
+    } else {
+        b->next = (struct picoquic_multicast_packet_integrity_t *)picoquic_multicast_integrity_sorted_merge(a, (picoquic_multicast_packet_integrity_t *)b->next);
+        return b;
+    }
+}
+
+void picoquic_multicast_integrity_merge_sort(picoquic_multicast_packet_integrity_t **head_ref) {
+    picoquic_multicast_packet_integrity_t *head = *head_ref;
+    picoquic_multicast_packet_integrity_t *a;
+    picoquic_multicast_packet_integrity_t *b;
+
+    if (!head || !head->next)
+        return; // 0 or 1 element
+
+    picoquic_multicast_integrity_split_list(head, &a, &b);
+
+    picoquic_multicast_integrity_merge_sort(&a);
+    picoquic_multicast_integrity_merge_sort(&b);
+
+    *head_ref = picoquic_multicast_integrity_sorted_merge(a, b);
+}

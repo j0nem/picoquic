@@ -91,12 +91,12 @@ int multicast_sender_open_file(multicast_sender_ctx_t* sender_ctx)
     return ret;
 }
 
-/* Schedule MC_LEAVE and MC_RETIRE frame to all clients to retire the channel */
-void picoquic_multicast_sender_retire(multicast_sender_ctx_t* sender_ctx) {
-    fprintf(stdout, "Nothing more to send, close channel with MC_LEAVE and MC_RETIRE\n");
+/* Schedule MC_LEAVE and MC_RETIRE frame to all clients (if not already done) to retire the channel */
+void multicast_sender_retire(multicast_sender_ctx_t* sender_ctx) {
     picoquic_schedule_mc_leave_and_retire(sender_ctx->server_ctx->mc_channel);
 }
 
+/* Multicast application callback */
 int multicast_sender_callback(picoquic_multicast_channel_t* channel,
     uint64_t stream_id, uint8_t* bytes, size_t length,
     picoquic_call_back_event_t fin_or_event, void* callback_ctx, void* v_stream_ctx)
@@ -134,7 +134,7 @@ int multicast_sender_callback(picoquic_multicast_channel_t* channel,
             // thread at this point and notify server via callback
             if (sender_ctx->file_sent >= sender_ctx->file_length && sender_ctx->file_was_opened) {
                 picoquic_mark_datagram_ready_multicast(sender_ctx->server_ctx->mc_channel, 0);
-                picoquic_multicast_sender_retire(sender_ctx);
+                multicast_sender_retire(sender_ctx);
                 break;
             }
 
@@ -213,7 +213,7 @@ int multicast_sender_callback(picoquic_multicast_channel_t* channel,
                 // File sending finished, stop sender loop and delete 
                 // thread at this point and notify server via callback
                 if (!more_data) {
-                    picoquic_multicast_sender_retire(sender_ctx);
+                    multicast_sender_retire(sender_ctx);
                 }
             }
             break;
@@ -244,7 +244,7 @@ static int multicast_sender_init(multicast_sender_ctx_t *sender_ctx,
 }
 
 /* Start multicast sender server */
-int picoquic_multicast_sender_start(multicast_sender_ctx_t* sender_ctx) {
+int multicast_sender_start(multicast_sender_ctx_t* sender_ctx) {
     int ret = 0;
     int thread_ret = 0;
     picoquic_packet_loop_param_t param = { 0 };
@@ -259,9 +259,6 @@ int picoquic_multicast_sender_start(multicast_sender_ctx_t* sender_ctx) {
 
     // CHECK MC: GSO deactivated currently due to issues with local interfaces, may be re-activated later?
     param.do_not_use_gso = 1;
-
-    /* Set the callback context */
-    picoquic_set_callback_multicast(server_ctx->mc_channel, multicast_sender_callback, sender_ctx);
 
     /* Start the background thread. */
     sender_ctx->thread_ctx = picoquic_start_custom_network_thread_ex(server_ctx->quic, &param,

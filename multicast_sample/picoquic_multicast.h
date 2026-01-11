@@ -85,12 +85,12 @@ typedef struct st_multicast_server_ctx_t
     int is_closing;
 } multicast_server_ctx_t;
 
-int picoquic_multicast_client(char const *server_name, int server_port, 
+int multicast_client(char const *server_name, int server_port, 
     char const *default_dir, int max_rate);
 
-int picoquic_multicast_sender_start(multicast_sender_ctx_t* sender_ctx);
+int multicast_sender_start(multicast_sender_ctx_t* sender_ctx);
 
-int picoquic_multicast_server(int server_port, int sender_port, const char *server_cert, 
+int multicast_server(int server_port, int sender_port, const char *server_cert, 
     const char *server_key, int max_rate, const char *served_file, int client_threshold);
 
 #ifdef __cplusplus

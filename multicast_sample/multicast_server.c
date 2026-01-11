@@ -189,7 +189,7 @@ int multicast_server_callback(picoquic_cnx_t *cnx,
             // If data sending on multicast channel did not start yet, start now
             fprintf(stdout, "Callback picoquic_callback_multicast_join_attempted, joined clients: %i, threshold: %i\n", server_ctx->nb_joined_clients, server_ctx->client_threshold);
             if (!server_ctx->sender_running && server_ctx->nb_joined_clients >= server_ctx->client_threshold) {
-                int err = picoquic_multicast_sender_start(&server_ctx->sender_app_ctx);
+                int err = multicast_sender_start(&server_ctx->sender_app_ctx);
                 if (err == 0) {
                     server_ctx->sender_running = 1;
                     fprintf(stdout, "Multicast sender started\n");
@@ -268,7 +268,7 @@ static int multicast_server_loop_cb(picoquic_quic_t* quic, picoquic_packet_loop_
  * - The loop breaks if the socket return an error.
  */
 
-int picoquic_multicast_server(int server_port, int sender_port, const char *server_cert, const char *server_key, int max_rate, const char *served_file, int client_threshold)
+int multicast_server(int server_port, int sender_port, const char *server_cert, const char *server_key, int max_rate, const char *served_file, int client_threshold)
 {
     /* Start: start the QUIC process with cert and key files */
     int ret = 0;
