@@ -1448,6 +1448,7 @@ typedef struct st_picoquic_mc_channel_in_cnx_t {
     uint64_t latest_state_sequence_available;
     uint64_t latest_limits_sequence_available;
     struct mcrx_subscription* mcrx_subscription;
+    struct mcrx_ctx* mcrx_ctx;
 
     // ack context
     picoquic_ack_context_t ack_ctx;
@@ -1457,13 +1458,13 @@ typedef struct st_picoquic_mc_channel_in_cnx_t {
     int mc_join_acked;
     int mc_leave_acked;
     int mc_retire_acked;
-    int key_acked;                                              // At least one MC_KEY frame was acked
+    int key_acked;                                               // At least one MC_KEY frame was acked
     int mc_leave_scheduled;
     int mc_retire_scheduled;
-    uint64_t last_time_woken;                                        // When this cnx was last woken for sending multicast frames on unicast in the socket loop
+    uint64_t last_time_woken;                                    // When this cnx was last woken for sending multicast frames on unicast in the socket loop
     uint64_t latest_key_sequence_acked;
-    int first_mc_integrity_sent;                                // sent at least one mc_integrity frame (needed bc the first packet no is 0)
-    uint64_t mc_integrity_latest_pn_sent;                       // latest *multicast* packet number for which an integrity hash was sent
+    int first_mc_integrity_sent;                                 // sent at least one mc_integrity frame (needed bc the first packet no is 0)
+    uint64_t mc_integrity_latest_pn_sent;                        // latest *multicast* packet number for which an integrity hash was sent
     picoquic_multicast_integrity_ack_t** integrity_frames_acked; // stores info, which MC_INTEGRITY frames were ACKed by client
     size_t nb_integrity_frames_acked;
 
@@ -1472,12 +1473,12 @@ typedef struct st_picoquic_mc_channel_in_cnx_t {
     uint64_t latest_receive_time;
     picoquic_mc_state_enum state_scheduled;
     picoquic_mc_state_frame_enum state_frame_scheduled;
-    int state_reason_scheduled;         // reason code for scheduled state frame, could also be different from picoquic_mc_state_reason_enum choices
-    int mc_state_acked;                 // At least one MC_STATE frame was acked
-    int mc_limits_acked;                // At least one MC_LIMITS frame was acked
+    int state_reason_scheduled;          // reason code for scheduled state frame, could also be different from picoquic_mc_state_reason_enum choices
+    int mc_state_acked;                  // At least one MC_STATE frame was acked
+    int mc_limits_acked;                 // At least one MC_LIMITS frame was acked
     uint64_t latest_state_sequence_acked;
     uint64_t latest_limits_sequence_acked;
-    uint64_t leave_after_packet_number; // Send STATE(Left) after this packet number has been received
+    uint64_t leave_after_packet_number;  // Send STATE(Left) after this packet number has been received
     uint64_t retire_after_packet_number; // Send STATE(Retired) after this packet number has been received
     uint64_t leave_received_at;          // current_time when MC_LEAVE arrived (for timeout)
     uint64_t retire_received_at;         // current_time when MC_RETIRE arrived (for timeout)
@@ -1877,7 +1878,10 @@ void picoquic_queue_for_retransmit(picoquic_cnx_t* cnx, picoquic_path_t* path_x,
 picoquic_packet_t* picoquic_dequeue_retransmit_packet(picoquic_cnx_t* cnx, picoquic_packet_context_t* pkt_ctx,
     picoquic_packet_t* p, int should_free,
     int add_to_data_repeat_queue);
+picoquic_packet_t* picoquic_dequeue_retransmit_packet_multicast(picoquic_multicast_channel_t* channel,
+    picoquic_packet_context_t * pkt_ctx, picoquic_packet_t* p, int should_free);
 void picoquic_dequeue_retransmitted_packet(picoquic_cnx_t* cnx, picoquic_packet_context_t* pkt_ctx, picoquic_packet_t* p);
+void picoquic_dequeue_retransmitted_packet_multicast(picoquic_multicast_channel_t* channel, picoquic_packet_context_t* pkt_ctx, picoquic_packet_t* p);
 
 /* Reset the connection context, e.g. after retry */
 int picoquic_reset_cnx(picoquic_cnx_t* cnx, uint64_t current_time);
@@ -2318,6 +2322,8 @@ int picoquic_wake_for_multicast_frames(picoquic_quic_t* quic,
     uint64_t threshold, uint64_t current_time, int64_t* delta_t);
 void picoquic_multicast_update_leave_retired_waiting(picoquic_mc_channel_in_cnx_t* ch_in_cnx, uint64_t current_time);
 uint64_t picoquic_multicast_get_latest_packet_number_verified(picoquic_multicast_channel_t* channel);
+void picoquic_multicast_handle_client_retired(picoquic_multicast_channel_t* channel);
+void picoquic_multicast_handle_cnx_close(picoquic_cnx_t* cnx);
 
 picoquic_mc_channel_in_cnx_t* picoquic_add_channel_to_cnx(picoquic_cnx_t* cnx, 
     picoquic_multicast_channel_t* channel);
@@ -2347,7 +2353,11 @@ const uint8_t* picoquic_skip_mc_ack_frame(const uint8_t* bytes,
     const uint8_t* bytes_max, int is_ecn);
 uint8_t* picoquic_format_mc_leave_frame(uint8_t* bytes, uint8_t* bytes_max, 
     picoquic_mc_channel_in_cnx_t* ch_in_cnx, int * more_data);
+uint8_t* picoquic_format_mc_retire_frame(uint8_t* bytes, uint8_t* bytes_max, 
+    picoquic_mc_channel_in_cnx_t* ch_in_cnx, int * more_data);
 const uint8_t* picoquic_skip_mc_leave_frame(const uint8_t* bytes, 
+    const uint8_t* bytes_max);
+const uint8_t* picoquic_skip_mc_retire_frame(const uint8_t* bytes, 
     const uint8_t* bytes_max);
 
 int picoquic_is_ack_needed_multicast(picoquic_cnx_t* cnx, uint64_t current_time, uint64_t* next_wake_time,

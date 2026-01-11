@@ -65,9 +65,13 @@ int picoquic_process_ack_of_mc_join_frame(picoquic_cnx_t* cnx, const uint8_t* by
     size_t bytes_size, size_t* consumed);
 int picoquic_process_ack_of_mc_leave_frame(picoquic_cnx_t* cnx, const uint8_t* bytes,
     size_t bytes_size, size_t* consumed);
+int picoquic_process_ack_of_mc_retire_frame(picoquic_cnx_t* cnx, const uint8_t* bytes,
+    size_t bytes_size, size_t* consumed);
 int picoquic_check_mc_join_needs_repeat(picoquic_cnx_t* cnx, const uint8_t* bytes, 
     const uint8_t* bytes_max, int* no_need_to_repeat);
 int picoquic_check_mc_leave_needs_repeat(picoquic_cnx_t* cnx, const uint8_t* bytes,
+    const uint8_t* bytes_max, int* no_need_to_repeat);
+int picoquic_check_mc_retire_needs_repeat(picoquic_cnx_t* cnx, const uint8_t* bytes,
     const uint8_t* bytes_max, int* no_need_to_repeat);
 int picoquic_process_ack_of_mc_state_frame(picoquic_cnx_t* cnx, const uint8_t* bytes,
     size_t bytes_size, uint64_t ftype, size_t* consumed);
@@ -3659,6 +3663,9 @@ int picoquic_check_frame_needs_repeat(picoquic_cnx_t* cnx, const uint8_t* bytes,
                 case picoquic_frame_type_mc_leave:
                     ret = picoquic_check_mc_leave_needs_repeat(cnx, bytes, p_bytes_max, no_need_to_repeat);
                     break;
+                case picoquic_frame_type_mc_retire:
+                    ret = picoquic_check_mc_retire_needs_repeat(cnx, bytes, p_bytes_max, no_need_to_repeat);
+                    break;
                 case picoquic_frame_type_mc_state_multicast:
                 case picoquic_frame_type_mc_state_application:
                     ret = picoquic_check_mc_state_needs_repeat(cnx, bytes, p_bytes_max, no_need_to_repeat);
@@ -3837,6 +3844,10 @@ void picoquic_process_ack_of_frames(picoquic_cnx_t* cnx, picoquic_packet_t* p,
             break;
         case picoquic_frame_type_mc_leave:
             ret = picoquic_process_ack_of_mc_leave_frame(cnx, &p->bytes[byte_index], p->length - byte_index, &frame_length);
+            byte_index += frame_length;
+            break;
+        case picoquic_frame_type_mc_retire:
+            ret = picoquic_process_ack_of_mc_retire_frame(cnx, &p->bytes[byte_index], p->length - byte_index, &frame_length);
             byte_index += frame_length;
             break;
         case picoquic_frame_type_mc_state_multicast:
@@ -4439,8 +4450,9 @@ const uint8_t* picoquic_decode_connection_close_frame(picoquic_cnx_t* cnx, const
         picoquic_state_enum old_state = cnx->cnx_state;
         cnx->cnx_state = (cnx->cnx_state < picoquic_state_client_ready_start || cnx->crypto_context[picoquic_epoch_1rtt].aead_decrypt == NULL) ? picoquic_state_disconnected : picoquic_state_closing_received;
 
-        // TODO MC: What happens with active multicast channels when the unicast cnx is closed by remote?
-
+        if (cnx->is_multicast_enabled == 1) {
+            picoquic_multicast_handle_cnx_close(cnx);
+        }
         if (cnx->callback_fn != NULL && cnx->cnx_state != old_state && cnx->cnx_state == picoquic_state_disconnected) {
             (void)(cnx->callback_fn)(cnx, 0, NULL, 0, picoquic_callback_close, cnx->callback_ctx, NULL);
         }
@@ -4483,6 +4495,9 @@ const uint8_t* picoquic_decode_application_close_frame(picoquic_cnx_t* cnx, cons
     }
     else {
         cnx->cnx_state = (cnx->cnx_state < picoquic_state_client_ready_start) ? picoquic_state_disconnected : picoquic_state_closing_received;
+        if (cnx->is_multicast_enabled == 1) {
+            picoquic_multicast_handle_cnx_close(cnx);
+        }
         if (cnx->callback_fn) {
             (void)(cnx->callback_fn)(cnx, 0, NULL, 0, picoquic_callback_application_close, cnx->callback_ctx, NULL);
         }
@@ -7626,10 +7641,20 @@ const uint8_t* picoquic_decode_mc_state_frame(picoquic_cnx_t* cnx, const uint8_t
     // Server callback when state changed
     if (state_before != channel_found->state) {
         if (channel_found->state == picoquic_mc_state_join_attempted) {
-            cnx->callback_fn(cnx, 0, NULL, 0, picoquic_callback_multicast_join_attempted, cnx->callback_ctx, &channel_found->channel->channel_id);
+            if (cnx->callback_fn != NULL) {
+                cnx->callback_fn(cnx, 0, NULL, 0, picoquic_callback_multicast_join_attempted, cnx->callback_ctx, &channel_found->channel->channel_id);
+            }
         }
         if (channel_found->state == picoquic_mc_state_left) {
-            cnx->callback_fn(cnx, 0, NULL, 0, picoquic_callback_multicast_left, cnx->callback_ctx, &channel_found->channel->channel_id);
+            if (cnx->callback_fn != NULL) {
+                cnx->callback_fn(cnx, 0, NULL, 0, picoquic_callback_multicast_left, cnx->callback_ctx, &channel_found->channel->channel_id);
+            }
+        }
+        if (channel_found->state == picoquic_mc_state_retired) {
+            picoquic_multicast_handle_client_retired(channel_found->channel);
+            if (cnx->callback_fn != NULL) {
+                cnx->callback_fn(cnx, 0, NULL, 0, picoquic_callback_multicast_retired, cnx->callback_ctx, &channel_found->channel->channel_id);
+            }
         }
     }
 
@@ -8801,6 +8826,207 @@ int picoquic_check_mc_leave_needs_repeat(picoquic_cnx_t* cnx, const uint8_t* byt
     return ret;
 }
 
+/*
+ * MC_RETIRE frame
+ */
+
+uint8_t* picoquic_format_mc_retire_frame(uint8_t* bytes, uint8_t* bytes_max, picoquic_mc_channel_in_cnx_t* ch_in_cnx, int * more_data)
+{
+    uint8_t* bytes0 = bytes;
+    
+    // Frame type
+    // Channel ID Length
+    if ((bytes = picoquic_frames_varint_encode(bytes, bytes_max, picoquic_frame_type_mc_retire)) == NULL
+        || (bytes = picoquic_frames_uint8_encode(bytes, bytes_max, ch_in_cnx->channel->channel_id.id_len)) == NULL) {
+        *more_data = 1;
+        return bytes0;
+    } 
+
+    // Channel ID
+    uint8_t bytes_copied = picoquic_format_multicast_channel_id(bytes, bytes_max - bytes, &ch_in_cnx->channel->channel_id);
+    if (bytes_copied == 0) {
+        *more_data = 1;
+        return bytes0;
+    } else {
+        bytes += bytes_copied;
+    }
+
+    // After Packet number
+    if ((bytes = picoquic_frames_varint_encode(bytes, bytes_max, ch_in_cnx->channel->pkt_ctx.send_sequence - 1)) == NULL) {
+        *more_data = 1;
+        return bytes0;
+    } 
+
+    if (ch_in_cnx->state < picoquic_mc_state_retire_pending) {
+        ch_in_cnx->state = picoquic_mc_state_retire_pending;
+    }
+
+    return bytes;
+}
+
+const uint8_t* picoquic_skip_mc_retire_frame(const uint8_t* bytes, const uint8_t* bytes_max) {
+    uint8_t ch_id_length = 0;
+
+    if ((bytes = picoquic_frames_uint8_decode(bytes, bytes_max, &ch_id_length)) != NULL && // channel id length
+        (bytes = picoquic_frames_fixed_skip(bytes, bytes_max, (uint64_t)ch_id_length)) != NULL) { // channel id
+            bytes = picoquic_frames_varint_skip(bytes, bytes_max); // after packet number
+        }
+
+    return bytes;
+}
+
+const uint8_t* picoquic_decode_mc_retire_frame(picoquic_cnx_t* cnx, const uint8_t* bytes, 
+    const uint8_t* bytes_max, uint64_t current_time) 
+{
+    const uint8_t* bytes0 = bytes;
+
+    if (!cnx->is_multicast_enabled || !cnx->client_mode) {
+        picoquic_connection_error_ex(cnx, PICOQUIC_TRANSPORT_FRAME_FORMAT_ERROR, picoquic_frame_type_mc_retire, "Received unexpected MC_RETIRE frame\n");
+        return NULL;
+    }
+
+    uint8_t id_len;
+    picoquic_multicast_channel_id_t channel_id;
+
+    // Channel ID Length
+    if ((bytes = picoquic_frames_uint8_decode(bytes, bytes_max, &id_len)) == NULL) {
+        return NULL;
+    }
+
+    // Channel ID
+    uint8_t bytes_copied = picoquic_parse_multicast_channel_id(bytes, id_len, &channel_id);
+    if (bytes_copied == 0) {
+        return NULL;
+    } 
+
+    picoquic_mc_channel_in_cnx_t* channel_found = picoquic_find_multicast_channel_in_cnx(&channel_id, cnx);
+    if (channel_found == NULL) {
+        fprintf(stderr, "Error: Received a MC_RETIRE, but no mc channel was found in the connection\n");
+        return picoquic_skip_mc_retire_frame(bytes0, bytes_max);
+    }
+
+    bytes += bytes_copied;
+
+    uint64_t after_packet_number;
+
+    if ((bytes = picoquic_frames_varint_decode(bytes, bytes_max, &after_packet_number)) == NULL
+    ) {
+        return NULL;
+    }
+
+    uint64_t highest_verified = picoquic_multicast_get_latest_packet_number_verified(channel_found->channel);
+
+    if (highest_verified < UINT64_MAX) {
+        fprintf(stdout, "Highest pn verified before first loss: %lu\n", highest_verified);
+    } else {
+        fprintf(stdout, "Highest pn verified before first loss: NULL\n");
+    }
+
+    if (highest_verified < UINT64_MAX && after_packet_number > highest_verified) {
+        channel_found->retire_after_packet_number = after_packet_number;
+        channel_found->retire_received_at = current_time;
+        fprintf(stderr, "Received a MC_RETIRE frame with future packet number (%li), wait until it arrives\n", after_packet_number);
+    }
+
+    if (channel_found->state < picoquic_mc_state_retire_waiting) {
+        channel_found->state = picoquic_mc_state_retire_waiting;
+    }
+
+    picoquic_multicast_update_leave_retired_waiting(channel_found, current_time);
+
+    return bytes;
+}
+
+int picoquic_process_ack_of_mc_retire_frame(picoquic_cnx_t* cnx, const uint8_t* bytes,
+    size_t bytes_size, size_t* consumed)
+{
+    const uint8_t* bytes_first = bytes;
+    const uint8_t* bytes_max = bytes + bytes_size;
+
+    // Skip frame type
+    const uint8_t* bytes_after_ftype = bytes = picoquic_frames_varint_skip(bytes, bytes_max);
+
+    uint8_t id_len;
+    picoquic_multicast_channel_id_t channel_id;
+    uint64_t seq_number;
+
+    if ((bytes = picoquic_frames_uint8_decode(bytes, bytes_max, &id_len)) == NULL) {
+        return -1;
+    }
+
+    uint8_t bytes_copied = picoquic_parse_multicast_channel_id(bytes, id_len, &channel_id);
+
+    if (bytes_copied == 0) {
+        return -1;
+    }
+
+    bytes += bytes_copied;
+    bytes = picoquic_frames_varint_decode(bytes, bytes_max, &seq_number);
+    
+    if (bytes == NULL) {
+        return -1;
+    }
+
+    int ret = 0;
+    const uint8_t* bytes_next = picoquic_skip_mc_retire_frame(bytes_after_ftype, bytes_max);
+
+    if (bytes_next == NULL) {
+        return -1;
+    }
+    else {
+        picoquic_mc_channel_in_cnx_t* ch_in_cnx = picoquic_find_multicast_channel_in_cnx(&channel_id, cnx);
+        if (ch_in_cnx == NULL) {
+            return -1;
+        }
+        ch_in_cnx->mc_retire_acked = 1;
+        *consumed = bytes_next - bytes_first;
+    }
+    
+    fprintf(stdout, "ACK of MC_RETIRE successfully processed\n");
+    return ret;
+}
+
+int picoquic_check_mc_retire_needs_repeat(picoquic_cnx_t* cnx, const uint8_t* bytes, const uint8_t* bytes_max, int* no_need_to_repeat)
+{
+    int ret = 0;
+    const uint8_t* bytes_parsing = bytes;
+    uint8_t id_len;
+    picoquic_multicast_channel_id_t channel_id;
+    *no_need_to_repeat = 0;
+
+    if ((bytes_parsing = picoquic_frames_uint8_decode(bytes_parsing, bytes_max, &id_len)) == NULL) {
+        *no_need_to_repeat = 1;
+        return -1;
+    }
+
+    uint8_t bytes_copied = picoquic_parse_multicast_channel_id(bytes_parsing, id_len, &channel_id);
+
+    if (bytes_copied == 0) {
+        *no_need_to_repeat = 1;
+        return -1;
+    }
+
+    picoquic_mc_channel_in_cnx_t* ch_in_cnx;
+
+    if ((ch_in_cnx = picoquic_find_multicast_channel_in_cnx(&channel_id, cnx)) == NULL) {
+        /* If the channel is not in the connection (anymore?), no need to repeat this frame. */
+        *no_need_to_repeat = 1;
+    }
+    else if (ch_in_cnx->mc_retire_acked > 0) 
+    {
+        /* If MC_RETIRE was acked, do not repeat */
+        *no_need_to_repeat = 1;
+    }
+
+    if (*no_need_to_repeat == 0) {
+        fprintf(stdout, "MC_RETIRE needs repeat\n");
+    } else {
+        fprintf(stdout, "MC_RETIRE do not need repeat\n");
+    }
+
+    return ret;
+}
+
 /* BDP frames as defined in https://tools.ietf.org/html/draft-kuhn-quic-0rtt-bdp-09
 */
 
@@ -9464,6 +9690,10 @@ int picoquic_decode_frames(picoquic_cnx_t* cnx, picoquic_path_t * path_x, const 
                             fprintf(stdout, "Got MC_LEAVE frame\n");
                             bytes = picoquic_decode_mc_leave_frame(cnx, bytes, bytes_max, current_time);
                             break;
+                        case picoquic_frame_type_mc_retire:
+                            fprintf(stdout, "Got MC_RETIRE frame\n");
+                            bytes = picoquic_decode_mc_retire_frame(cnx, bytes, bytes_max, current_time);
+                            break;
                         default:
                             /* Not implemented yet! */
                             picoquic_connection_error(cnx, PICOQUIC_TRANSPORT_FRAME_FORMAT_ERROR, frame_id64);
@@ -9806,6 +10036,10 @@ int picoquic_skip_frame(const uint8_t* bytes, size_t bytes_maxsize, size_t* cons
                     break;
                 case picoquic_frame_type_mc_leave:
                     bytes = picoquic_skip_mc_leave_frame(bytes, bytes_max);
+                    *pure_ack = 0;
+                    break;
+                case picoquic_frame_type_mc_retire:
+                    bytes = picoquic_skip_mc_retire_frame(bytes, bytes_max);
                     *pure_ack = 0;
                     break;
                 case picoquic_frame_type_mc_state_multicast:
