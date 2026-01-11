@@ -1465,7 +1465,7 @@ void qlog_mc_retire_frame(FILE* f, bytestream* s)
 
     uint64_t after_packet_number = 0;
     byteread_vint(s, &after_packet_number);
-    fprintf(f, ", \"after_packet_number\": %"PRIu64"", after_packet_number);
+    fprintf(f, "\", \"after_packet_number\": %"PRIu64"", after_packet_number);
 }
 
 void qlog_mc_state_frame(FILE* f, bytestream* s)

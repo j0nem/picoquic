@@ -1118,7 +1118,7 @@ void* picoquic_packet_loop_v3(void* v_ctx)
                     delta_t = time_check_arg.delta_t;
                 }
             }
-            // CHECK MC: Set delta lower on active multicast receivers, set to zero when MC_INTEGRITY frames have to be sent
+            // Set delta lower on active multicast receivers, set to zero when MC_INTEGRITY frames have to be sent
             picoquic_wake_for_multicast_frames(quic, mc_integrity_packet_threshold, current_time, &delta_t);
         }
         else {

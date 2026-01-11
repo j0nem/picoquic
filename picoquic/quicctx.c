@@ -953,7 +953,7 @@ int picoquic_wake_for_multicast_frames(picoquic_quic_t* quic, uint64_t threshold
         if (channel->nb_used_in_cnx > 0) {
             for (int j = 0; j < channel->nb_used_in_cnx; j++) {
                 picoquic_mc_channel_in_cnx_t* ch_in_cnx = channel->used_in_cnx[j];
-                if (ch_in_cnx->state < picoquic_mc_state_left) { // ENHANCE MC: Clarify when MC_INTEGRITY frames still need to be sent
+                if (ch_in_cnx->state < picoquic_mc_state_retired) {
                     
                     // In client mode, if in waiting state, wake more often, because client is waiting for timeout to leave channel
                     if (channel->client_mode) {
@@ -967,22 +967,24 @@ int picoquic_wake_for_multicast_frames(picoquic_quic_t* quic, uint64_t threshold
                     // ENHANCE MC: Check if the receivers are really active (sent MC_ACK frames in the recent past)
                     // -> if not, make delay longer
 
-                    // Real Wake: Wake cnx if we really know that we need to send something (integrity, leave or retire frame)
-                    if ((channel->packet_integrity_last != NULL && ch_in_cnx->mc_integrity_latest_pn_sent < channel->packet_integrity_last->packet_number)
-                        || ch_in_cnx->mc_leave_scheduled || ch_in_cnx->mc_retire_scheduled) {
-                            ch_in_cnx->last_time_woken = current_time;
+                    if (ch_in_cnx->state < picoquic_mc_state_left) {
+                        // Real Wake: Wake cnx if we really know that we need to send something (integrity, leave or retire frame)
+                        if ((channel->packet_integrity_last != NULL && ch_in_cnx->mc_integrity_latest_pn_sent < channel->packet_integrity_last->packet_number)
+                            || ch_in_cnx->mc_leave_scheduled || ch_in_cnx->mc_retire_scheduled) {
+                                ch_in_cnx->last_time_woken = current_time;
+                                picoquic_reinsert_by_wake_time(quic, ch_in_cnx->cnx, current_time);
+                        // Threshold wake: Also wake a few more times if the last real wake was not too long ago, to make sure we really 
+                        // didn't miss anything before going into the long 10 seconds break of picoquic
+                        } else if (ch_in_cnx->last_time_woken + wake_after_active >= current_time) {
                             picoquic_reinsert_by_wake_time(quic, ch_in_cnx->cnx, current_time);
-                    // Threshold wake: Also wake a few more times if the last real wake was not too long ago, to make sure we really 
-                    // didn't miss anything before going into the long 10 seconds break of picoquic
-                    } else if (ch_in_cnx->last_time_woken + wake_after_active >= current_time) {
-                        picoquic_reinsert_by_wake_time(quic, ch_in_cnx->cnx, current_time);
-                    }
+                        }
 
-                    if (channel->packet_integrity_last != NULL &&
-                        ch_in_cnx->mc_integrity_latest_pn_sent + threshold < channel->packet_integrity_last->packet_number) {
-                        *delta_t = 0;
-                    } else if (*delta_t > active_max_delta_t) {
-                        *delta_t = active_max_delta_t;
+                        if (channel->packet_integrity_last != NULL &&
+                            ch_in_cnx->mc_integrity_latest_pn_sent + threshold < channel->packet_integrity_last->packet_number) {
+                            *delta_t = 0;
+                        } else if (*delta_t > active_max_delta_t) {
+                            *delta_t = active_max_delta_t;
+                        }
                     }
                 }
             }
@@ -1180,6 +1182,8 @@ int picoquic_join_mc_channel(picoquic_cnx_t* cnx, picoquic_multicast_channel_id_
             ret = -1;
         }
     }
+
+    ch_in_cnx->mcrx_ctx = ctx;
     
     if (ret != 0) {
         ch_in_cnx->state_frame_scheduled = picoquic_mc_state_frame_declined_join;
@@ -1228,6 +1232,15 @@ uint64_t picoquic_multicast_get_latest_packet_number_verified(picoquic_multicast
     return UINT64_MAX;
 }
 
+void picoquic_multicast_remove_subscription(picoquic_mc_channel_in_cnx_t* ch) {
+    if (ch->mcrx_subscription != NULL) {
+        picoquic_mcrx_leave(ch->mcrx_subscription);
+    }
+    if (ch->mcrx_ctx != NULL) {
+        picoquic_mcrx_cleanup(&ch->mcrx_ctx);
+    }
+}
+
 // Schedule State(Left) / State(Retired) on client when in retire_waiting / leave_waiting states and final packet number has been received
 void picoquic_multicast_update_leave_retired_waiting(picoquic_mc_channel_in_cnx_t* ch_in_cnx, uint64_t current_time) {
     uint64_t highest_verified = picoquic_multicast_get_latest_packet_number_verified(ch_in_cnx->channel);
@@ -1240,7 +1253,8 @@ void picoquic_multicast_update_leave_retired_waiting(picoquic_mc_channel_in_cnx_
         ch_in_cnx->state_scheduled = picoquic_mc_state_retired;
         ch_in_cnx->state_frame_scheduled = picoquic_mc_state_frame_retired;
         ch_in_cnx->state_reason_scheduled = picoquic_mc_state_reason_requested_by_server;
-    } 
+        picoquic_multicast_remove_subscription(ch_in_cnx);
+    }
     else if (ch_in_cnx->state == picoquic_mc_state_leave_waiting && 
         ((highest_verified < UINT64_MAX && highest_verified >= ch_in_cnx->leave_after_packet_number) || ch_in_cnx->leave_received_at + timeout <= current_time)
     ) {
@@ -1248,6 +1262,7 @@ void picoquic_multicast_update_leave_retired_waiting(picoquic_mc_channel_in_cnx_
         ch_in_cnx->state_scheduled = picoquic_mc_state_left;
         ch_in_cnx->state_frame_scheduled = picoquic_mc_state_frame_left;
         ch_in_cnx->state_reason_scheduled = picoquic_mc_state_reason_requested_by_server;
+        picoquic_multicast_remove_subscription(ch_in_cnx);
     }
 }
 
@@ -1301,6 +1316,46 @@ int picoquic_schedule_mc_retire(picoquic_multicast_channel_t* channel, picoquic_
     }
 
     return 0;
+}
+
+// Handle process on the server when a client sent MC_STATE(Retired)
+void picoquic_multicast_handle_client_retired(picoquic_multicast_channel_t* channel) 
+{
+    int non_retired_clients = 0;
+
+    for (int i = 0; i < channel->nb_used_in_cnx; i++) {
+        if (channel->used_in_cnx[i]->state < picoquic_mc_state_retired) {
+            non_retired_clients++;
+        }
+    }
+
+    if (non_retired_clients == 0) {
+        channel->is_retired = 1;
+    }
+}
+
+// Handle multicast state on the server when a client closed the connection
+void picoquic_multicast_handle_cnx_close(picoquic_cnx_t* cnx) 
+{
+    for (int i = 0; i < cnx->nb_mc_channels; i++) {
+        picoquic_mc_channel_in_cnx_t* ch_in_cnx = cnx->mc_channels[i];
+        picoquic_multicast_channel_t* channel = ch_in_cnx->channel;
+        int non_retired_clients = 0;
+
+        ch_in_cnx->state = picoquic_mc_state_retired;
+
+        if (cnx->client_mode == 0) {
+            for (int i = 0; i < channel->nb_used_in_cnx; i++) {
+                if (channel->used_in_cnx[i]->state < picoquic_mc_state_retired) {
+                    non_retired_clients++;
+                }
+            }
+
+            if (non_retired_clients == 0) {
+                channel->is_retired = 1;
+            }
+        }
+    }
 }
 
 void picoquic_set_default_address_discovery_mode(picoquic_quic_t* quic, int mode)
@@ -1492,6 +1547,10 @@ void picoquic_free(picoquic_quic_t* quic)
             free(quic->tls_master_ctx);
             quic->tls_master_ctx = NULL;
         }
+
+        /* Delete multicast channel pointers, the content are already
+        deleted in picoquic_delete_cnx() above */
+        free(quic->mc_channels);
 
         /* Close the logs */
         picoquic_log_close_logs(quic);
@@ -5040,6 +5099,25 @@ void picoquic_reset_packet_context(picoquic_cnx_t* cnx,
     pkt_ctx->ecn_ce_total_remote = 0;
 }
 
+void picoquic_reset_packet_context_multicast(picoquic_multicast_channel_t* channel,
+    picoquic_packet_context_t * pkt_ctx)
+{
+    while (pkt_ctx->pending_last != NULL) {
+        (void)picoquic_dequeue_retransmit_packet_multicast(channel, pkt_ctx, pkt_ctx->pending_last, 1);
+    }
+    
+    while (pkt_ctx->retransmitted_newest != NULL) {
+        picoquic_dequeue_retransmitted_packet_multicast(channel, pkt_ctx, pkt_ctx->retransmitted_newest);
+    }
+
+    pkt_ctx->retransmitted_oldest = NULL;
+
+    /* Reset the ECN data */
+    pkt_ctx->ecn_ect0_total_remote = 0;
+    pkt_ctx->ecn_ect1_total_remote = 0;
+    pkt_ctx->ecn_ce_total_remote = 0;
+}
+
 /*
 * Reset the connection after an incoming retry packet.
 *
@@ -5118,7 +5196,11 @@ int picoquic_connection_error_ex(picoquic_cnx_t* cnx, uint64_t local_error, uint
         cnx->local_error = local_error;
         cnx->local_error_reason = local_reason;
         cnx->cnx_state = picoquic_state_disconnecting;
-        // TODO MC: Set multicast joined state also to "leaving" or similar
+
+        if(cnx->is_multicast_enabled) {
+            picoquic_multicast_handle_cnx_close(cnx);
+        }
+
     } else if (cnx->cnx_state < picoquic_state_server_false_start) {
         if (cnx->cnx_state != picoquic_state_handshake_failure &&
             cnx->cnx_state != picoquic_state_handshake_failure_resend) {
@@ -5186,6 +5268,107 @@ void picoquic_delete_sooner_packets(picoquic_cnx_t* cnx)
         packet = next_packet;
     }
     cnx->first_sooner = NULL;
+}
+
+void picoquic_delete_mc_channel_in_cnx_list(picoquic_mc_channel_in_cnx_t** channels, int nb_channels);
+
+void picoquic_delete_multicast_channel(picoquic_multicast_channel_t* channel) {
+    if (channel == NULL) {
+        return;
+    }
+
+    if (channel->nb_used_in_cnx > 0) {
+        picoquic_delete_mc_channel_in_cnx_list(channel->used_in_cnx, channel->nb_used_in_cnx);
+    }
+
+    for (int i = 0; i < channel->nb_aead_secrets; i++) {
+        free(channel->aead_secrets[i]);
+    }
+
+    picoquic_crypto_context_free(&channel->crypto_context);
+
+    while (channel->p_first_packet != NULL) {
+        picoquic_packet_t * p = channel->p_first_packet->packet_previous;
+        free(channel->p_first_packet);
+        channel->p_first_packet = p;
+        channel->nb_packets_allocated--;
+        channel->nb_packets_in_pool--;
+    }
+
+    picoquic_reset_packet_context_multicast(channel, &channel->pkt_ctx);
+
+    while(channel->packet_integrity_first != NULL) {
+        picoquic_multicast_packet_integrity_t* next = (picoquic_multicast_packet_integrity_t*)channel->packet_integrity_first->next;
+        free(channel->packet_integrity_first->hash);
+        free(channel->packet_integrity_first);
+        channel->packet_integrity_first = next;
+    }
+    channel->packet_integrity_last = NULL;
+
+    // TODO MC: Clean stream data structs in multicast_channel_t here
+
+    while (channel->first_datagram != NULL) {
+        picoquic_delete_misc_or_dg(&channel->first_datagram, &channel->last_datagram, channel->first_datagram);
+    }
+}
+
+void picoquic_remove_mc_channel_in_cnx_from_element(picoquic_mc_channel_in_cnx_t** channels,
+     int* nb_channels, picoquic_mc_channel_in_cnx_t* channel_to_remove
+) {
+    int index = -1;
+
+    for (int i = 0; i < *nb_channels; i++) {
+        if (channels[i] == channel_to_remove) {
+            index = i;
+            break;
+        }
+    }
+
+    if (index == -1) {
+        return;
+    }
+
+    for (int i = index; i < *nb_channels - 1; i++) {
+        channels[i] = channels[i + 1];
+    }
+
+    channels[*nb_channels - 1] = NULL;
+
+    (*nb_channels)--;
+}
+
+void picoquic_delete_mc_channel_in_cnx_list(picoquic_mc_channel_in_cnx_t** channels, int nb_channels) {
+    for (int i = 0; i < nb_channels; i++) {
+        picoquic_mc_channel_in_cnx_t* ch_in_cnx = channels[i];
+
+        picoquic_multicast_remove_subscription(ch_in_cnx);
+        
+        for (int j = 0; j < ch_in_cnx->nb_integrity_frames_acked; j++) {
+            free(ch_in_cnx->integrity_frames_acked[j]);
+        }
+
+        while (ch_in_cnx->awaiting_integrity_check_first != NULL) {
+            picoquic_multicast_packet_t* integrity_wait_next = (picoquic_multicast_packet_t*)ch_in_cnx->awaiting_integrity_check_first->next;
+            free(ch_in_cnx->awaiting_integrity_check_first->hash);
+            free(ch_in_cnx->awaiting_integrity_check_first->bytes);
+            free(ch_in_cnx->awaiting_integrity_check_first);
+            ch_in_cnx->awaiting_integrity_check_first = integrity_wait_next;
+        }
+        ch_in_cnx->awaiting_integrity_check_last = NULL;
+
+        if (ch_in_cnx->channel != NULL) {
+            picoquic_multicast_channel_t* channel = ch_in_cnx->channel;
+            picoquic_remove_mc_channel_in_cnx_from_element(
+                ch_in_cnx->channel->used_in_cnx, &ch_in_cnx->channel->nb_used_in_cnx,
+                ch_in_cnx);
+
+            if (channel->nb_used_in_cnx == 0) {
+                picoquic_delete_multicast_channel(channel);
+            }
+        }
+
+        free(ch_in_cnx);
+    }
 }
 
 void picoquic_delete_cnx(picoquic_cnx_t* cnx)
@@ -5280,6 +5463,10 @@ void picoquic_delete_cnx(picoquic_cnx_t* cnx)
 
         picoquic_unregister_net_icid(cnx);
         picoquic_unregister_net_secret(cnx);
+
+        // Remove multicast contexts
+        picoquic_delete_mc_channel_in_cnx_list(cnx->mc_channels, cnx->nb_mc_channels);
+        free(cnx->mc_channels);
 
         free(cnx);
     }

@@ -1203,6 +1203,70 @@ void picoquic_queue_for_retransmit(picoquic_cnx_t* cnx, picoquic_path_t * path_x
     }
 }
 
+picoquic_packet_t* picoquic_dequeue_retransmit_packet_multicast(picoquic_multicast_channel_t* channel, 
+    picoquic_packet_context_t * pkt_ctx, picoquic_packet_t* p, int should_free)
+{
+    size_t dequeued_length = p->length + p->checksum_overhead;
+
+    if (p->is_queued_for_retransmit) {
+        /* Remove from list */
+        if (p->packet_next == NULL) {
+            pkt_ctx->pending_last = p->packet_previous;
+        }
+        else {
+            p->packet_next->packet_previous = p->packet_previous;
+        }
+
+        if (p->packet_previous == NULL) {
+            pkt_ctx->pending_first = p->packet_next;
+        }
+        else {
+            p->packet_previous->packet_next = p->packet_next;
+        }
+        p->is_queued_for_retransmit = 0;
+    }
+
+    /* Account for bytes in transit, for congestion control */
+
+    if (p->send_path != NULL && !p->is_ack_trap) {
+        if (p->send_path->bytes_in_transit > dequeued_length) {
+            p->send_path->bytes_in_transit -= dequeued_length;
+        }
+        else {
+            p->send_path->bytes_in_transit = 0;
+        }
+        p->send_path->is_cc_data_updated = 1;
+    }
+
+    /* Replace head of preemptive repeat list if it was this packet. */
+    if (pkt_ctx->preemptive_repeat_ptr == p) {
+        pkt_ctx->preemptive_repeat_ptr = p->packet_next;
+    }
+
+    if (should_free || p->is_ack_trap) {
+        picoquic_recycle_packet_multicast(channel, p);
+        p = NULL;
+    }
+    else {
+        p->packet_previous = NULL;
+        /* add this packet to the retransmitted list */
+        if (pkt_ctx->retransmitted_oldest == NULL) {
+            pkt_ctx->retransmitted_newest = p;
+            pkt_ctx->retransmitted_oldest = p;
+            p->packet_next = NULL;
+        }
+        else {
+            pkt_ctx->retransmitted_newest->packet_previous = p;
+            p->packet_next = pkt_ctx->retransmitted_newest;
+            pkt_ctx->retransmitted_newest = p;
+        }
+        pkt_ctx->retransmitted_queue_size += 1;
+        p->is_queued_for_spurious_detection = 1;
+    }
+
+    return p;
+}
+
 picoquic_packet_t* picoquic_dequeue_retransmit_packet(picoquic_cnx_t* cnx, 
     picoquic_packet_context_t * pkt_ctx, picoquic_packet_t* p, int should_free,
     int add_to_data_repeat_queue)
@@ -1275,6 +1339,32 @@ picoquic_packet_t* picoquic_dequeue_retransmit_packet(picoquic_cnx_t* cnx,
     }
 
     return p;
+}
+
+void picoquic_dequeue_retransmitted_packet_multicast(picoquic_multicast_channel_t* channel, picoquic_packet_context_t* pkt_ctx, picoquic_packet_t* p)
+{
+    pkt_ctx->retransmitted_queue_size -= 1;
+    if (p->packet_previous == NULL) {
+        pkt_ctx->retransmitted_newest = p->packet_next;
+    }
+    else {
+        p->packet_previous->packet_next = p->packet_next;
+    }
+
+    if (p->packet_next == NULL) {
+        pkt_ctx->retransmitted_oldest = p->packet_previous;
+    }
+    else {
+        p->packet_next->packet_previous = p->packet_previous;
+    }
+
+    /* Packets can be queued simultaneously for data repeat and 
+    * for detection of spurious losses, so should only be recycled
+    * when removed from both queues */
+    p->is_queued_for_spurious_detection = 0;
+    if (!p->is_queued_for_data_repeat) {
+        picoquic_recycle_packet_multicast(channel, p);
+    }
 }
 
 void picoquic_dequeue_retransmitted_packet(picoquic_cnx_t* cnx, picoquic_packet_context_t* pkt_ctx, picoquic_packet_t* p)
@@ -3234,14 +3324,13 @@ uint8_t * picoquic_prepare_multicast_leave_retire_frames(picoquic_cnx_t* cnx,
             }
             // if channel retire scheduled
             if (ch->mc_retire_scheduled) {
-                // TODO MC: Implement MC_RETIRE frame
-                // uint8_t *bytes_next = picoquic_format_mc_retire_frame(bytes, bytes_max, ch, more_data);
-                // if (bytes_next > bytes) {
-                //     *is_pure_ack = 0;
-                //     bytes = bytes_next;
-                //     ch->state = picoquic_mc_state_retire_pending; 
-                //     ch->mc_retire_scheduled = 0;
-                // }
+                uint8_t *bytes_next = picoquic_format_mc_retire_frame(bytes, bytes_max, ch, more_data);
+                if (bytes_next > bytes) {
+                    *is_pure_ack = 0;
+                    bytes = bytes_next;
+                    ch->state = picoquic_mc_state_retire_pending; 
+                    ch->mc_retire_scheduled = 0;
+                }
             }
         }
     }

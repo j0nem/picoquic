@@ -45,6 +45,7 @@ typedef struct st_multicast_client_ctx_t
     FILE *F;
     size_t bytes_received;
     unsigned int is_stream_finished : 1;
+    unsigned int exiting : 1;
 } multicast_client_ctx_t;
 
 /* Close file and free context */
@@ -210,8 +211,10 @@ int multicast_client_callback(picoquic_cnx_t *cnx,
             fprintf(stdout, "app: Received request to close connection\n");
         case picoquic_callback_multicast_left:
             fprintf(stdout, "app: Left the multicast channel, stop receiving\n");
+            client_ctx->exiting = 1;
         case picoquic_callback_multicast_retired:
             fprintf(stdout, "app: Retired the multicast client, stop receiving\n");
+            client_ctx->exiting = 1;
         case picoquic_callback_application_close:
             fprintf(stdout, "app: Received request to close application.\n");
             /* Remove the application callback */
@@ -289,7 +292,7 @@ static int multicast_client_loop_cb(picoquic_quic_t *quic, picoquic_packet_loop_
         case picoquic_packet_loop_alt_port:
             break;
         case picoquic_packet_loop_after_send:
-            if (picoquic_get_cnx_state(cb_ctx->cnx) == picoquic_state_disconnected) {
+            if (picoquic_get_cnx_state(cb_ctx->cnx) == picoquic_state_disconnected || cb_ctx->exiting == 1) {
                 ret = PICOQUIC_NO_ERROR_TERMINATE_PACKET_LOOP;
             }
             break;
