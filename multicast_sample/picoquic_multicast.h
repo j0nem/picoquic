@@ -76,6 +76,8 @@ typedef struct st_multicast_server_ctx_t
     int nb_joined_clients;
     int nb_active_clients;
     multicast_sender_ctx_t sender_app_ctx;
+    picoquic_packet_loop_param_t* sender_loop_params;
+    int* sender_thread_ret;
     int sender_running;
     int client_threshold;
     const char *server_cert; 
@@ -88,7 +90,7 @@ typedef struct st_multicast_server_ctx_t
 int multicast_client(char const *server_name, int server_port, 
     char const *default_dir, int max_rate);
 
-int multicast_sender_start(multicast_sender_ctx_t* sender_ctx);
+int multicast_sender_start(multicast_sender_ctx_t* sender_ctx, int* thread_ret, picoquic_packet_loop_param_t* param);
 
 int multicast_server(int server_port, int sender_port, const char *server_cert, 
     const char *server_key, int max_rate, const char *served_file, int client_threshold);

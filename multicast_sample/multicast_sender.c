@@ -244,28 +244,26 @@ static int multicast_sender_init(multicast_sender_ctx_t *sender_ctx,
 }
 
 /* Start multicast sender server */
-int multicast_sender_start(multicast_sender_ctx_t* sender_ctx) {
+int multicast_sender_start(multicast_sender_ctx_t* sender_ctx, int* thread_ret, picoquic_packet_loop_param_t* param) {
     int ret = 0;
-    int thread_ret = 0;
-    picoquic_packet_loop_param_t param = { 0 };
     multicast_server_ctx_t* server_ctx = sender_ctx->server_ctx;
 
     ret = multicast_sender_init(sender_ctx, server_ctx->mc_channel);
 
     /* Set the params for this thread */
-    param.multicast_channel = server_ctx->mc_channel;
-    param.local_port = server_ctx->sender_port;
-    param.force_localhost_src_ip = 1; /* Force localhost as src ip for multicast packets for local tests */
+    param->multicast_channel = server_ctx->mc_channel;
+    param->local_port = server_ctx->sender_port;
+    param->force_localhost_src_ip = 1; /* Force localhost as src ip for multicast packets for local tests */
 
     // CHECK MC: GSO deactivated currently due to issues with local interfaces, may be re-activated later?
-    param.do_not_use_gso = 1;
+    param->do_not_use_gso = 1;
 
     /* Start the background thread. */
-    sender_ctx->thread_ctx = picoquic_start_custom_network_thread_ex(server_ctx->quic, &param,
+    sender_ctx->thread_ctx = picoquic_start_custom_network_thread_ex(server_ctx->quic, param,
         picoquic_internal_thread_create, picoquic_internal_thread_delete,
         picoquic_internal_thread_setname, "multicast_sender", 
         picoquic_packet_loop_multicast_send,
-        NULL, NULL, &thread_ret);
+        NULL, NULL, thread_ret);
 
     ret = multicast_sender_mark_datagram_ready(sender_ctx);
 

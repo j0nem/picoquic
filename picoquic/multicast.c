@@ -75,7 +75,6 @@ int picoquic_mcrx_removed_socket_cb(
     channel->fd = 0;
     channel->socket_open = 0;
 
-    fprintf(stdout, "Debug: mcrx_removed_socket_cb called\n");
     return MCRX_ERR_OK;
 }
 
