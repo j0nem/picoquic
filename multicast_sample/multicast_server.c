@@ -189,7 +189,7 @@ int multicast_server_callback(picoquic_cnx_t *cnx,
             // If data sending on multicast channel did not start yet, start now
             fprintf(stdout, "Callback picoquic_callback_multicast_join_attempted, joined clients: %i, threshold: %i\n", server_ctx->nb_joined_clients, server_ctx->client_threshold);
             if (!server_ctx->sender_running && server_ctx->nb_joined_clients >= server_ctx->client_threshold) {
-                int err = multicast_sender_start(&server_ctx->sender_app_ctx);
+                int err = multicast_sender_start(&server_ctx->sender_app_ctx, server_ctx->sender_thread_ret, server_ctx->sender_loop_params);
                 if (err == 0) {
                     server_ctx->sender_running = 1;
                     fprintf(stdout, "Multicast sender started\n");
@@ -278,6 +278,9 @@ int multicast_server(int server_port, int sender_port, const char *server_cert, 
     multicast_server_cnx_ctx_t default_context = {0}; // Per connection context
     multicast_server_ctx_t global_ctx = {0}; // Application global context
 
+    int sender_thread_ret = 0;
+    picoquic_packet_loop_param_t sender_loop_params = {0};
+
     global_ctx.served_filename = served_file;
     global_ctx.server_cert = server_cert;
     global_ctx.server_key = server_key;
@@ -285,6 +288,9 @@ int multicast_server(int server_port, int sender_port, const char *server_cert, 
     global_ctx.client_threshold = client_threshold;
     global_ctx.quic = quic;
     global_ctx.sender_app_ctx.server_ctx = &global_ctx;
+
+    global_ctx.sender_loop_params = &sender_loop_params;
+    global_ctx.sender_thread_ret = &sender_thread_ret;
 
     default_context.global_ctx = &global_ctx;
 

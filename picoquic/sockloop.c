@@ -830,11 +830,13 @@ void* picoquic_packet_loop_multicast_send(void* v_ctx)
 
     // Very simple rate limiting according to announced limit of channel
     // ENHANCE MC: Enhance rate limiting 
-    struct timespec start_time, current_time;
-    timespec_get(&start_time, TIME_UTC);
+    struct timespec start_time_sec, start_time_millisec, current_time;
+    timespec_get(&start_time_sec, TIME_UTC);
+    memcpy(&start_time_millisec, &start_time_sec, sizeof(struct timespec));
 
     size_t bytes_sent_per_second = 0;
-    int max_bytes_per_second = ((int)mc_channel->max_rate * 128); // max rate is in kibps, 1 kib = 128 byte
+    size_t bytes_sent_per_millisec = 0;
+    size_t max_bytes_per_millisec = ((int)mc_channel->max_rate * 128) / 1000; // max rate is in kibit per sec, 1 kibit = 128 byte
 
     /* Start of Packet Loop */
     while (ret == 0 && !thread_ctx->thread_should_close) {
@@ -848,127 +850,133 @@ void* picoquic_packet_loop_multicast_send(void* v_ctx)
             int sock_ret = 0;
             int sock_err = 0;
 
-            int remaining_capacity = max_bytes_per_second - bytes_sent_per_second;
-            if (remaining_capacity > 0) {
+            int remaining_capacity = (int)(max_bytes_per_millisec - bytes_sent_per_millisec);
+            if (remaining_capacity > 100) {
+                // TODO MC: Make sure that packets are only prepared with max. remaining_capacity bytes
+                // Currently, as long as at least 100 byte is still remaining, the method prepares
+                // a packet of arbitrary length
                 ret = picoquic_prepare_next_packet_multicast(quic,
                     send_buffer, send_buffer_size, &send_length,
                     &peer_addr, &local_addr, mc_channel,
                     send_msg_ptr);
-            } else {
-                send_length = 0;
-            }
-
-            if (ret != 0 || send_length <= 0) { 
-                break;
-            }
-
-            /* If send_msg_size is defined, sendmsg may send more than one packet.
-                * We compute that to update the number of packets sent in the loop.
-                */
-            nb_packets_sent += (send_msg_size == 0) ? 1 :
-                (send_length + send_msg_size - 1) / (send_msg_size);
-            if (send_length > param->send_length_max) {
-                param->send_length_max = send_length;
-            }
             
-            SOCKET_TYPE send_socket = s_ctx[0].fd;
-            bytes_sent += send_length;
-            bytes_sent_per_second += send_length;
+                if (ret == 0 && send_length > 0) {
+                    /* If send_msg_size is defined, sendmsg may send more than one packet.
+                        * We compute that to update the number of packets sent in the loop.
+                        */
+                    nb_packets_sent += (send_msg_size == 0) ? 1 :
+                        (send_length + send_msg_size - 1) / (send_msg_size);
+                    if (send_length > param->send_length_max) {
+                        param->send_length_max = send_length;
+                    }
+                    
+                    SOCKET_TYPE send_socket = s_ctx[0].fd;
+                    bytes_sent += send_length;
+                    bytes_sent_per_second += send_length;
+                    bytes_sent_per_millisec += send_length;
 
-            // Force 127.0.0.1 as src ip for local tests
-            if (param->force_localhost_src_ip) {
-                picoquic_store_text_addr(&local_addr, "127.0.0.1", 0);
-            }
+                    // Force 127.0.0.1 as src ip for local tests
+                    if (param->force_localhost_src_ip) {
+                        picoquic_store_text_addr(&local_addr, "127.0.0.1", 0);
+                    }
 
-            // WORKAROUND: For whatever reason, in picoquic the port in every sockaddr struct is usually stored in host byte order.
-            // To get multicast working, we have to convert the port of the group address to network byte order before calling picoquic_sendmsg()
-            if (peer_addr.ss_family == AF_INET) {
-                ((struct sockaddr_in*)&peer_addr)->sin_port = htons(((struct sockaddr_in*)&peer_addr)->sin_port);
-            } else if (peer_addr.ss_family == AF_INET6) {
-                ((struct sockaddr_in6*)&peer_addr)->sin6_port = htons(((struct sockaddr_in6*)&peer_addr)->sin6_port);
-            }
+                    // WORKAROUND: For whatever reason, in picoquic the port in every sockaddr struct is usually stored in host byte order.
+                    // To get multicast working, we have to convert the port of the group address to network byte order before calling picoquic_sendmsg()
+                    if (peer_addr.ss_family == AF_INET) {
+                        ((struct sockaddr_in*)&peer_addr)->sin_port = htons(((struct sockaddr_in*)&peer_addr)->sin_port);
+                    } else if (peer_addr.ss_family == AF_INET6) {
+                        ((struct sockaddr_in6*)&peer_addr)->sin6_port = htons(((struct sockaddr_in6*)&peer_addr)->sin6_port);
+                    }
 
-            if (send_socket == INVALID_SOCKET) {
-                sock_ret = -1;
-                sock_err = -1;
-            }
-            else
-            {
-                if (param->simulate_eio && send_length > PICOQUIC_MAX_PACKET_SIZE) {
-                    /* Test hook, simulating a driver that does not support GSO */
-                    sock_ret = -1;
-                    sock_err = EIO;
-                    param->simulate_eio = 0;
-                }
-                else {
-                    sock_ret = picoquic_sendmsg(send_socket,
-                        (struct sockaddr*)&peer_addr, (struct sockaddr*)&local_addr, 0,
-                        (const char*)send_buffer, (int)send_length, (int)send_msg_size, &sock_err);
-                }
-            }
-            if (sock_ret <= 0) {
-                /* TODO: add a test in which the socket fails. */
-                // CLEAN MC: Refactor logging without using stdout
-                fprintf(stdout, "Could not send message to AF_to=%d, AF_from=%d, ret=%d, err=%d\n",
-                    peer_addr.ss_family, local_addr.ss_family, sock_ret, sock_err);
-
-                if (sock_err == EIO) {
-                    /* TODO: this is an error encountered if the system supports GSO, but
-                        * the specific interface driver does not. Main example is Mininet.
-                        * Not sure that we can treat that correctly. Try to minimize the
-                        * amount of untested code? Rely on config flag? Rely on error
-                        * recovery? */
-                    size_t packet_index = 0;
-                    size_t packet_size = send_msg_size;
-
-                    while (packet_index < send_length) {
-                        if (packet_index + packet_size > send_length) {
-                            packet_size = send_length - packet_index;
-                        }
-                        sock_ret = picoquic_sendmsg(send_socket,
-                            (struct sockaddr*)&peer_addr, (struct sockaddr*)&local_addr, 0,
-                            (const char*)(send_buffer + packet_index), (int)packet_size, 0, &sock_err);
-                        if (sock_ret > 0) {
-                            packet_index += packet_size;
+                    if (send_socket == INVALID_SOCKET) {
+                        sock_ret = -1;
+                        sock_err = -1;
+                    }
+                    else
+                    {
+                        if (param->simulate_eio && send_length > PICOQUIC_MAX_PACKET_SIZE) {
+                            /* Test hook, simulating a driver that does not support GSO */
+                            sock_ret = -1;
+                            sock_err = EIO;
+                            param->simulate_eio = 0;
                         }
                         else {
-                            fprintf(stdout, "Retry with packet size=%zu fails at index %zu, ret=%d, err=%d.\n",
-                                packet_size, packet_index, sock_ret, sock_err);
-                            break;
+                            sock_ret = picoquic_sendmsg(send_socket,
+                                (struct sockaddr*)&peer_addr, (struct sockaddr*)&local_addr, 0,
+                                (const char*)send_buffer, (int)send_length, (int)send_msg_size, &sock_err);
                         }
                     }
-                    if (sock_ret > 0) {
-                        fprintf(stdout, "Retry of %zu bytes by chunks of %zu bytes succeeds.\n",
-                            send_length, send_msg_size);
-                    }
-                    if (send_msg_ptr != NULL) {
-                        /* Make sure that we do not use GSO anymore in this run */
-                        send_msg_ptr = NULL;
-                        fprintf(stdout, "%s", "UDP GSO was disabled\n");
+                    if (sock_ret <= 0) {
+                        /* TODO: add a test in which the socket fails. */
+                        // CLEAN MC: Refactor logging without using stdout
+                        fprintf(stdout, "Could not send message to AF_to=%d, AF_from=%d, ret=%d, err=%d\n",
+                            peer_addr.ss_family, local_addr.ss_family, sock_ret, sock_err);
+
+                        if (sock_err == EIO) {
+                            /* TODO: this is an error encountered if the system supports GSO, but
+                                * the specific interface driver does not. Main example is Mininet.
+                                * Not sure that we can treat that correctly. Try to minimize the
+                                * amount of untested code? Rely on config flag? Rely on error
+                                * recovery? */
+                            size_t packet_index = 0;
+                            size_t packet_size = send_msg_size;
+
+                            while (packet_index < send_length) {
+                                if (packet_index + packet_size > send_length) {
+                                    packet_size = send_length - packet_index;
+                                }
+                                sock_ret = picoquic_sendmsg(send_socket,
+                                    (struct sockaddr*)&peer_addr, (struct sockaddr*)&local_addr, 0,
+                                    (const char*)(send_buffer + packet_index), (int)packet_size, 0, &sock_err);
+                                if (sock_ret > 0) {
+                                    packet_index += packet_size;
+                                }
+                                else {
+                                    fprintf(stdout, "Retry with packet size=%zu fails at index %zu, ret=%d, err=%d.\n",
+                                        packet_size, packet_index, sock_ret, sock_err);
+                                    break;
+                                }
+                            }
+                            if (sock_ret > 0) {
+                                fprintf(stdout, "Retry of %zu bytes by chunks of %zu bytes succeeds.\n",
+                                    send_length, send_msg_size);
+                            }
+                            if (send_msg_ptr != NULL) {
+                                /* Make sure that we do not use GSO anymore in this run */
+                                send_msg_ptr = NULL;
+                                fprintf(stdout, "%s", "UDP GSO was disabled\n");
+                            }
+                        }
                     }
                 }
+            }
+
+            // Rate limiting
+            timespec_get(&current_time, TIME_UTC);
+            double elapsed_seconds = (current_time.tv_sec - start_time_sec.tv_sec) +
+                                    ((current_time.tv_nsec - start_time_sec.tv_nsec) / 1e9);
+
+            double elapsed_milliseconds = ((current_time.tv_sec - start_time_millisec.tv_sec) +
+                                    (current_time.tv_nsec - start_time_millisec.tv_nsec) / 1e9) * 1000;
+
+            if (elapsed_milliseconds >= 1.0) {
+                bytes_sent_per_millisec = 0; 
+                timespec_get(&start_time_millisec, TIME_UTC);
+            }
+
+            if (elapsed_seconds >= 1.0) {
+                printf("Total sent: %ld bytes = %lf kibit in 1 second, max = %d kibit per second\n", bytes_sent_per_second, ((double)bytes_sent_per_second / 128), (int)mc_channel->max_rate);
+                bytes_sent_per_second = 0; 
+                timespec_get(&start_time_sec, TIME_UTC);
             }
         }
 
+        // After each 10 packets, run callback
         if (ret == 0) {
             if (loop_callback != NULL) {
                 ret = loop_callback(quic, picoquic_packet_loop_after_send, loop_callback_ctx, &bytes_sent);
             }
         }
-
-        // Rate limiting
-        timespec_get(&current_time, TIME_UTC);
-        double elapsed_seconds = (current_time.tv_sec - start_time.tv_sec) +
-                                (current_time.tv_nsec - start_time.tv_nsec) / 1e9;
-
-        if (elapsed_seconds >= 1.0) {
-            printf("Total sent: %ld bytes = %lf mib in 1 second\n", bytes_sent_per_second, ((double)bytes_sent_per_second / 131072));
-            bytes_sent_per_second = 0; 
-            timespec_get(&start_time, TIME_UTC);
-        }
-
-        struct timespec ts = {0, (long)(10000000)};
-        nanosleep(&ts, NULL);
     }
 
     thread_ctx->thread_is_ready = 0;
