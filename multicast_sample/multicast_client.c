@@ -39,12 +39,10 @@ typedef struct st_multicast_client_ctx_t
     char const *default_dir;
     struct sockaddr_storage server_address;
     struct sockaddr_storage multicast_group_address;
-    int nb_files_received;
     picoquic_tp_multicast_client_params_t* tp_params;
 
     FILE *F;
     size_t bytes_received;
-    unsigned int is_stream_finished : 1;
     unsigned int exiting : 1;
 } multicast_client_ctx_t;
 
@@ -161,9 +159,6 @@ int multicast_client_callback_multicast(picoquic_multicast_channel_t* channel,
                     fprintf(stdout, "TRANSMISSION COMPLETE, CLOSING FILE\n");
                     client_ctx->F = picoquic_file_close(client_ctx->F);
                     
-                    client_ctx->is_stream_finished = 1;
-                    client_ctx->nb_files_received++;
-
                     // TODO MC: Maybe already leave the channel here (but wait for the missing frames though!)
                 }
                 break;
@@ -446,8 +441,6 @@ int multicast_client(char const *server_name, int server_port, char const *defau
 
     param.local_af = server_address.ss_family;
     param.local_port = (uint16_t)picoquic_uniform_random(30000) + 20000;
-    param.extra_socket_required = 1;
-    param.prefer_extra_socket = 0;
 
     /* Wait for packets */
     ret = picoquic_packet_loop_v2(quic, &param, multicast_client_loop_cb, &client_ctx);

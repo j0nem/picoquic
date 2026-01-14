@@ -1,11 +1,11 @@
-picoquic multicast
+picoquic datagram sample
 ===============
 
-The multicast program is a simple QUIC client/server multicast demo.
+The sample program is a simple QUIC client/server demo using `DATAGRAM` frames
 
 Building
 --------
-`multicast` is built as part of the compilation process of picoquic. It
+`dgramspl` is built as part of the compilation process of picoquic. It
 will be available in the root folder.
 
 Usage
@@ -13,13 +13,13 @@ Usage
 Usage:
 
 ```bash
-../multicast client server_name port folder max_rate
+../dgramspl client server_name port folder *queried_file
 ```
 
 or :  
 
 ```bash
-../multicast server port_server port_sender cert_file private_key_file max_rate served_file_name [client_threshold]
+../dgramspl server port cert_file private_key_file folder
 ```
 
 Example
@@ -44,19 +44,12 @@ echo "Hello world!" >> ./server_files/index.htm
 And run the server:
 
 ```bash
-./multicast server 4433 4434 ./ca-cert.pem ./server-key.pem 10240 /server_files/index.htm 2
-./multicast server 4433 ./ca-cert.pem ./server-key.pem ./server_files
-
+./dgramspl server 4433 ./ca-cert.pem ./server-key.pem ./server_files
 ```
 Then, test if you can reach it using the client:
 
 ```bash
-./multicast client localhost 4433 /tmp index.htm 10240
-```
-
-Run another client to test multicast ability and trigger the multicast sender:
-```bash
-./multicast client localhost 4433 /tmp2 index.htm 10240
+./dgramspl client localhost 4433 /tmp index.htm
 ```
 
 Getting logs
@@ -79,8 +72,8 @@ as a string of hexadecimal digits. For example, if the Initial CID is
 The qlog syntax is defined using JSON. The logs can be read using a text editor,
 or with specialized tools like [QVIS](https://qvis.edm.uhasselt.be/)
 
-Building the multicast sample
+Building the datagram sample
 -------------------
 The multicast is built when building `picoquic` using `cmake` and `make`, but you
 may want to build it separately from `picoquic`. For that, you can use the cmake 
-target `multicast` and just execute `make multicast` instead of `make`.
+target `dgramspl` and just execute `make dgramspl` instead of `make`.

@@ -19,6 +19,7 @@ option(ENABLE_ASAN "Enable AddressSanitizer (ASAN) for debugging" OFF)
 option(ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer (UBSan) for debugging" OFF)
 option(BUILD_DEMO "Build picoquicdemo" ON)
 option(BUILD_MULTICAST "Build multicast sample" ON)
+option(BUILD_DGRAMSPL "Build datagram sample" ON)
 option(BUILD_HTTP "Build picohttp" ON)
 option(BUILD_LOGLIB "Build picoquic-log" ON)
 option(BUILD_LOGREADER "Build picolog_t the log reader" ON)
@@ -343,7 +344,7 @@ target_link_libraries(picoquic-core
         Threads::Threads)
 set_picoquic_compile_settings(picoquic-core)
 
-if (BUILD_DEMO OR BUILD_MULTICAST OR BUILD_LOGREADER OR (BUILD_TESTING AND picoquic_BUILD_TESTS))
+if (BUILD_DEMO OR BUILD_MULTICAST OR BUILD_DGRAMSPL OR BUILD_LOGREADER OR (BUILD_TESTING AND picoquic_BUILD_TESTS))
     if (NOT BUILD_LOGLIB)
         set(BUILD_LOGLIB ON)
     endif()
@@ -422,6 +423,29 @@ if (BUILD_MULTICAST)
     target_include_directories(multicast PRIVATE ${LIBMCRX_INCLUDE_DIR})
     message(STATUS "LIBMCRX_LIBRARY = ${LIBMCRX_LIBRARY}")
     set_picoquic_compile_settings(multicast)
+endif()
+
+if (BUILD_DGRAMSPL)
+    find_library(LIBMCRX_LIBRARY NAMES libmcrx.a PATHS /usr/lib /usr/local/lib)
+    find_path(LIBMCRX_INCLUDE_DIR NAMES libmcrx.h PATHS /usr/include /usr/include/mcrx /usr/local/include)
+    add_executable(dgramspl
+        datagram_sample/dgramspl.c
+        datagram_sample/dgramspl_server.c
+        datagram_sample/dgramspl_client.c
+        picoquic/multicast.c
+    )
+    target_link_libraries(dgramspl
+        PUBLIC
+            ${PTLS_LIBRARIES}
+            ${OPENSSL_LIBRARIES}
+            ${MBEDTLS_LIBRARIES}
+            ${LIBMCRX_LIBRARY}
+            picoquic-log
+            picoquic-core
+            picohttp-core)
+    target_include_directories(dgramspl PRIVATE ${LIBMCRX_INCLUDE_DIR})
+    message(STATUS "LIBMCRX_LIBRARY = ${LIBMCRX_LIBRARY}")
+    set_picoquic_compile_settings(dgramspl)
 endif()
 
 if (BUILD_LOGREADER)
