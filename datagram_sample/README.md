@@ -1,12 +1,11 @@
 picoquic datagram sample
 ===============
 
-The sample program is a simple QUIC client/server demo using `DATAGRAM` frames
+The sample program is a very simple QUIC client/server demo transmitting `DATAGRAM` frames from the server to the client. This sample uses standard unicast to deliver the frames of a specified file, it was developed for comparison to to the [Multicast Sample](../multicast_sample/README.md).
 
 Building
 --------
-`dgramspl` is built as part of the compilation process of picoquic. It
-will be available in the root folder.
+Run `make dgramspl` to build the application.
 
 Usage
 -----
@@ -71,9 +70,3 @@ as a string of hexadecimal digits. For example, if the Initial CID is
 
 The qlog syntax is defined using JSON. The logs can be read using a text editor,
 or with specialized tools like [QVIS](https://qvis.edm.uhasselt.be/)
-
-Building the datagram sample
--------------------
-The multicast is built when building `picoquic` using `cmake` and `make`, but you
-may want to build it separately from `picoquic`. For that, you can use the cmake 
-target `dgramspl` and just execute `make dgramspl` instead of `make`.

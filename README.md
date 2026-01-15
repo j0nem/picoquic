@@ -1,3 +1,13 @@
+# picoquic Multicast
+
+This repository contains an experimental multicast extension for `picoquic`.  
+
+⚠️ **The current state is not stable and work-in-progress.** ⚠️
+
+➡️ **[Go to the multicast extension documentation](doc_multicast/README.md)** ⬅️ for further details.
+
+---
+
 # picoquic
 
 Minimalist implementation of the QUIC protocol, as defined by the IETF.
