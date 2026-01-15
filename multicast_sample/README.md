@@ -1,12 +1,11 @@
 picoquic multicast
 ===============
 
-The multicast program is a simple QUIC client/server multicast demo.
+The multicast program is a simple QUIC client/server multicast demo, opening a new multicast channel and delivering a specified file to all clients once a specified number of clients joined the multicast channel.
 
 Building
 --------
-`multicast` is built as part of the compilation process of picoquic. It
-will be available in the root folder.
+Run `make multicast` to build the multicast sample.
 
 Usage
 -----
@@ -21,6 +20,10 @@ or :
 ```bash
 ../multicast server port_server port_sender cert_file private_key_file max_rate served_file_name [client_threshold]
 ```
+
+The `client_threshold` specifies the number of clients needing to join the channel before the multicast sending process is started. 
+
+The `max_rate` is in kibps according to the QUIC multicast draft specification.
 
 Example
 -------
@@ -45,7 +48,6 @@ And run the server:
 
 ```bash
 ./multicast server 4433 4434 ./ca-cert.pem ./server-key.pem 10240 /server_files/index.htm 2
-./multicast server 4433 ./ca-cert.pem ./server-key.pem ./server_files
 
 ```
 Then, test if you can reach it using the client:
@@ -78,9 +80,3 @@ as a string of hexadecimal digits. For example, if the Initial CID is
 
 The qlog syntax is defined using JSON. The logs can be read using a text editor,
 or with specialized tools like [QVIS](https://qvis.edm.uhasselt.be/)
-
-Building the multicast sample
--------------------
-The multicast is built when building `picoquic` using `cmake` and `make`, but you
-may want to build it separately from `picoquic`. For that, you can use the cmake 
-target `multicast` and just execute `make multicast` instead of `make`.
