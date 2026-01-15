@@ -365,8 +365,6 @@ static int dgramspl_client_init(char const* server_name, int server_port, char c
             client_ctx->transport_parameters.max_datagram_frame_size = PICOQUIC_MAX_PACKET_SIZE;
             picoquic_set_transport_parameters(*cnx, &client_ctx->transport_parameters);
 
-            // TODO MC: Set max rate somewhere for comparison to multicast 
-
             /* Set the client callback context */
             picoquic_set_callback(*cnx, dgramspl_client_callback, client_ctx);
 
