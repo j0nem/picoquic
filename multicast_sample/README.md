@@ -18,12 +18,15 @@ Usage:
 or :  
 
 ```bash
-../multicast server port_server port_sender cert_file private_key_file max_rate served_file_name [client_threshold]
+../multicast server port_server port_sender cert_file private_key_file max_rate served_file_name [client_threshold] [is_local]
 ```
 
-The `client_threshold` specifies the number of clients needing to join the channel before the multicast sending process is started. 
+The `max_rate` parameter (int) is the maximum rate in kibps according to the QUIC multicast draft specification.
 
-The `max_rate` is in kibps according to the QUIC multicast draft specification.
+The `client_threshold` parameter (int) specifies the number of clients needing to join the channel before the multicast sending process is started. 
+
+The `is_local` parameter (string) can be set optionally (has to match the string `local` exactly) when all servers are running on localhost.
+This forces the sender to use the "from IP" `127.0.0.1`.
 
 Example
 -------
@@ -53,12 +56,12 @@ And run the server:
 Then, test if you can reach it using the client:
 
 ```bash
-./multicast client localhost 4433 /tmp index.htm 10240
+./multicast client localhost 4433 tmp/ 10240
 ```
 
 Run another client to test multicast ability and trigger the multicast sender:
 ```bash
-./multicast client localhost 4433 /tmp2 index.htm 10240
+./multicast client localhost 4433 tmp2/ 10240
 ```
 
 Getting logs

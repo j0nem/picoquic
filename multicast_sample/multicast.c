@@ -51,7 +51,7 @@ static void usage(char const * multicast_name)
     fprintf(stderr, "Usage:\n");
     fprintf(stderr, "    %s client server_name port folder max_rate\n", multicast_name);
     fprintf(stderr, "or :\n");
-    fprintf(stderr, "    %s server port_server port_sender cert_file private_key_file max_rate served_file_name [client_threshold]\n", multicast_name);
+    fprintf(stderr, "    %s server port_server port_sender cert_file private_key_file max_rate served_file_name [client_threshold] [is_local]\n", multicast_name);
     exit(1);
 }
 
@@ -84,21 +84,32 @@ int main(int argc, char** argv)
         }
     }
     else if (strcmp(argv[1], "server") == 0) {
-        if (argc < 8) {
+        int is_local = 0;
+        if (argc < 8 || argc > 10) {
             usage(argv[0]);
+            exit(exit_code);
         }
-        else {
-            int server_port = get_port(argv[0], argv[2]);
-            int sender_port = get_port(argv[0], argv[3]);
 
-            int max_rate = atoi(argv[6]);
-            int client_threshold = 1;
-            if (argc >= 9) {
-                client_threshold = atoi(argv[8]);
+        if (argc == 10) {
+            if (strcmp(argv[9], "local") != 0) {
+                usage(argv[0]);
+                exit(exit_code);
+            } else {
+                is_local = 1;
             }
-
-            exit_code = multicast_server(server_port, sender_port, argv[4], argv[5], max_rate, argv[7], client_threshold);
         }
+
+        int server_port = get_port(argv[0], argv[2]);
+        int sender_port = get_port(argv[0], argv[3]);
+
+        int max_rate = atoi(argv[6]);
+        int client_threshold = 1;
+
+        if (argc >= 9) {
+            client_threshold = atoi(argv[8]);
+        }
+
+        exit_code = multicast_server(server_port, sender_port, argv[4], argv[5], max_rate, argv[7], client_threshold, is_local);
     }
     else
     {
