@@ -268,7 +268,7 @@ static int multicast_server_loop_cb(picoquic_quic_t* quic, picoquic_packet_loop_
  * - The loop breaks if the socket return an error.
  */
 
-int multicast_server(int server_port, int sender_port, const char *server_cert, const char *server_key, int max_rate, const char *served_file, int client_threshold)
+int multicast_server(int server_port, int sender_port, const char *server_cert, const char *server_key, int max_rate, const char *served_file, int client_threshold, int is_local)
 {
     /* Start: start the QUIC process with cert and key files */
     int ret = 0;
@@ -286,6 +286,7 @@ int multicast_server(int server_port, int sender_port, const char *server_cert, 
     global_ctx.server_key = server_key;
     global_ctx.sender_port = sender_port;
     global_ctx.client_threshold = client_threshold;
+    global_ctx.is_local = is_local;
     global_ctx.quic = quic;
     global_ctx.sender_app_ctx.server_ctx = &global_ctx;
 

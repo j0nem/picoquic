@@ -253,10 +253,11 @@ int multicast_sender_start(multicast_sender_ctx_t* sender_ctx, int* thread_ret, 
     /* Set the params for this thread */
     param->multicast_channel = server_ctx->mc_channel;
     param->local_port = server_ctx->sender_port;
-    param->force_localhost_src_ip = 1; /* Force localhost as src ip for multicast packets for local tests */
 
-    // CHECK MC: GSO deactivated currently due to issues with local interfaces, may be re-activated later?
-    param->do_not_use_gso = 1;
+    if (server_ctx->is_local == 1) {
+        param->force_localhost_src_ip = 1; /* Force localhost as src ip for multicast packets for local tests */
+        param->do_not_use_gso = 1; // CHECK MC: GSO deactivated currently due to issues with local interfaces, may be re-activated later?
+    }
 
     /* Start the background thread. */
     sender_ctx->thread_ctx = picoquic_start_custom_network_thread_ex(server_ctx->quic, param,
