@@ -4599,7 +4599,7 @@ int picoquic_generate_packet_hash_multicast(picoquic_multicast_channel_t* channe
     }
     
     // CLEAN MC: Remove debug output
-    fprintf(stdout, "Generated %s hash for packet no %li\n", channel->hash_algorithm_name, pi_new->packet_number);
+    // fprintf(stdout, "Generated %s hash for packet no %li\n", channel->hash_algorithm_name, pi_new->packet_number);
 
     // Indicate that this element can now be used by concurrently running processes
     pi_new->is_active = 1;

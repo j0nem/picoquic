@@ -575,25 +575,32 @@ int picoquic_packet_loop_wait(picoquic_socket_ctx_t* s_ctx,
 #else 
 int picoquic_packet_loop_select(picoquic_socket_ctx_t* s_ctx,
     int nb_sockets,
-    struct sockaddr_storage* addr_from,
-    struct sockaddr_storage* addr_dest,
-    int* dest_if,
-    unsigned char * received_ecn,
+    struct sockaddr_storage addr_from[],
+    struct sockaddr_storage addr_dest[],
+    int dest_if[],
+    unsigned char received_ecn[],
     uint8_t* buffer, int buffer_max,
     int64_t delta_t,
     int * is_wake_up_event,
     picoquic_network_thread_ctx_t * thread_ctx,
     int * socket_rank,
-    picoquic_multicast_channel_t** mc_channels, int nb_mc_channels)
+    picoquic_multicast_channel_t** mc_channels, int nb_mc_channels, int* multicast_offset_from)
 {
+    // CHECK MC: This method was provisionally rewritten to support the case that one select() 
+    // statement returns data for both unicast and multicast fds, but this could 
+    // probably be handled in a nicer way.
+
     fd_set readfds;
     struct timeval tv;
     int ret_select = 0;
     int bytes_recv = 0;
     int sockmax = 0;
 
-    if (received_ecn != NULL) {
-        *received_ecn = 0;
+    received_ecn[0] = 0;
+    received_ecn[1] = 0;
+
+    if (*multicast_offset_from != -1) {
+        *multicast_offset_from = -1;
     }
 
     FD_ZERO(&readfds);
@@ -666,8 +673,8 @@ int picoquic_packet_loop_select(picoquic_socket_ctx_t* s_ctx,
             for (int i = 0; i < nb_sockets; i++) {
                 if (FD_ISSET(s_ctx[i].fd, &readfds)) {
                     *socket_rank = i;
-                    bytes_recv = picoquic_recvmsg(s_ctx[i].fd, addr_from,
-                        addr_dest, dest_if, received_ecn,
+                    bytes_recv = picoquic_recvmsg(s_ctx[i].fd, &addr_from[0],
+                        &addr_dest[0], &dest_if[0], &received_ecn[0],
                         buffer, buffer_max);
 
                     if (bytes_recv <= 0) {
@@ -677,11 +684,11 @@ int picoquic_packet_loop_select(picoquic_socket_ctx_t* s_ctx,
                     }
                     else {
                         /* Document incoming port */
-                        if (addr_dest->ss_family == AF_INET6) {
-                            ((struct sockaddr_in6*)addr_dest)->sin6_port = s_ctx[i].n_port;
+                        if (addr_dest[0].ss_family == AF_INET6) {
+                            ((struct sockaddr_in6*)(&addr_dest[0]))->sin6_port = s_ctx[i].n_port;
                         }
-                        else if (addr_dest->ss_family == AF_INET) {
-                            ((struct sockaddr_in*)addr_dest)->sin_port = s_ctx[i].n_port;
+                        else if (addr_dest[0].ss_family == AF_INET) {
+                            ((struct sockaddr_in*)(&addr_dest[0]))->sin_port = s_ctx[i].n_port;
                         }
                         break;
                     }
@@ -692,13 +699,22 @@ int picoquic_packet_loop_select(picoquic_socket_ctx_t* s_ctx,
                     continue;
                 }
 
+                // ENHANCE MC: This logic is currently only working when one multicast channel is active
+                // Generally, it could be enhanced
+
                 SOCKET_TYPE fd = mc_channels[i]->fd;
 
                 if (FD_ISSET(fd, &readfds)) {
                     *socket_rank = i;
-                    bytes_recv = picoquic_recvmsg(fd, addr_from,
-                        addr_dest, dest_if, received_ecn,
-                        buffer, buffer_max);
+                    int index = 0;
+                    if (bytes_recv > 0) {
+                        index = 1;
+                    }
+
+                    *multicast_offset_from = bytes_recv;
+                    bytes_recv += picoquic_recvmsg(fd, &addr_from[index],
+                        &addr_dest[index], &dest_if[index], &received_ecn[index],
+                        buffer + *multicast_offset_from, buffer_max);
 
                     if (bytes_recv <= 0) {
                         DBG_PRINTF("Could not receive packet on UDP socket[%d]= %d!\n",
@@ -707,13 +723,13 @@ int picoquic_packet_loop_select(picoquic_socket_ctx_t* s_ctx,
                     }
                     else {
                         /* Document incoming port and interface */
-                        if (addr_dest->ss_family == AF_INET6) {
-                            mc_channels[i]->local_port = ((struct sockaddr_in6*)addr_dest)->sin6_port;
+                        if (addr_dest[index].ss_family == AF_INET6) {
+                            mc_channels[i]->local_port = ((struct sockaddr_in6*)&addr_dest[index])->sin6_port;
                         }
-                        else if (addr_dest->ss_family == AF_INET) {
-                            mc_channels[i]->local_port = ((struct sockaddr_in*)addr_dest)->sin_port;
+                        else if (addr_dest[index].ss_family == AF_INET) {
+                            mc_channels[i]->local_port = ((struct sockaddr_in*)&addr_dest[index])->sin_port;
                         }
-                        mc_channels[i]->local_if = *dest_if;
+                        mc_channels[i]->local_if = dest_if[index];
                         break;
                     }
                 }
@@ -842,136 +858,131 @@ void* picoquic_packet_loop_multicast_send(void* v_ctx)
     while (ret == 0 && !thread_ctx->thread_should_close) {
         size_t bytes_sent = 0;
         size_t nb_packets_sent = 0;
+        struct sockaddr_storage peer_addr;
+        struct sockaddr_storage local_addr = { 0 };
+        int sock_ret = 0;
+        int sock_err = 0;
 
-        /* Start of send loop */
-        while (ret == 0 && nb_packets_sent < PICOQUIC_PACKET_LOOP_SEND_MAX) {
-            struct sockaddr_storage peer_addr;
-            struct sockaddr_storage local_addr = { 0 };
-            int sock_ret = 0;
-            int sock_err = 0;
+        int remaining_capacity = (int)(max_bytes_per_millisec - bytes_sent_per_millisec);
+        if (remaining_capacity >= PICOQUIC_MAX_PACKET_SIZE) {
+            // TODO MC: Make sure that packets are only prepared with max. remaining_capacity bytes
+            // and change condition above. Currently, max_rate has to be min. 12000 kibits, 
+            // because with that rate exactly one packet with 1536 byte fits into one milliscond.
+            ret = picoquic_prepare_next_packet_multicast(quic,
+                send_buffer, send_buffer_size, &send_length,
+                &peer_addr, &local_addr, mc_channel,
+                send_msg_ptr);
+        
+            if (ret == 0 && send_length > 0) {
+                /* If send_msg_size is defined, sendmsg may send more than one packet.
+                    * We compute that to update the number of packets sent in the loop.
+                    */
+                nb_packets_sent += (send_msg_size == 0) ? 1 :
+                    (send_length + send_msg_size - 1) / (send_msg_size);
+                if (send_length > param->send_length_max) {
+                    param->send_length_max = send_length;
+                }
+                
+                SOCKET_TYPE send_socket = s_ctx[0].fd;
+                bytes_sent += send_length;
+                bytes_sent_per_second += send_length;
+                bytes_sent_per_millisec += send_length;
 
-            int remaining_capacity = (int)(max_bytes_per_millisec - bytes_sent_per_millisec);
-            if (remaining_capacity > 100) {
-                // TODO MC: Make sure that packets are only prepared with max. remaining_capacity bytes
-                // Currently, as long as at least 100 byte is still remaining, the method prepares
-                // a packet of arbitrary length
-                ret = picoquic_prepare_next_packet_multicast(quic,
-                    send_buffer, send_buffer_size, &send_length,
-                    &peer_addr, &local_addr, mc_channel,
-                    send_msg_ptr);
-            
-                if (ret == 0 && send_length > 0) {
-                    /* If send_msg_size is defined, sendmsg may send more than one packet.
-                        * We compute that to update the number of packets sent in the loop.
-                        */
-                    nb_packets_sent += (send_msg_size == 0) ? 1 :
-                        (send_length + send_msg_size - 1) / (send_msg_size);
-                    if (send_length > param->send_length_max) {
-                        param->send_length_max = send_length;
-                    }
-                    
-                    SOCKET_TYPE send_socket = s_ctx[0].fd;
-                    bytes_sent += send_length;
-                    bytes_sent_per_second += send_length;
-                    bytes_sent_per_millisec += send_length;
+                // Force 127.0.0.1 as src ip for local tests
+                if (param->force_localhost_src_ip) {
+                    picoquic_store_text_addr(&local_addr, "127.0.0.1", 0);
+                }
 
-                    // Force 127.0.0.1 as src ip for local tests
-                    if (param->force_localhost_src_ip) {
-                        picoquic_store_text_addr(&local_addr, "127.0.0.1", 0);
-                    }
+                // WORKAROUND: For whatever reason, in picoquic the port in every sockaddr struct is usually stored in host byte order.
+                // To get multicast working, we have to convert the port of the group address to network byte order before calling picoquic_sendmsg()
+                if (peer_addr.ss_family == AF_INET) {
+                    ((struct sockaddr_in*)&peer_addr)->sin_port = htons(((struct sockaddr_in*)&peer_addr)->sin_port);
+                } else if (peer_addr.ss_family == AF_INET6) {
+                    ((struct sockaddr_in6*)&peer_addr)->sin6_port = htons(((struct sockaddr_in6*)&peer_addr)->sin6_port);
+                }
 
-                    // WORKAROUND: For whatever reason, in picoquic the port in every sockaddr struct is usually stored in host byte order.
-                    // To get multicast working, we have to convert the port of the group address to network byte order before calling picoquic_sendmsg()
-                    if (peer_addr.ss_family == AF_INET) {
-                        ((struct sockaddr_in*)&peer_addr)->sin_port = htons(((struct sockaddr_in*)&peer_addr)->sin_port);
-                    } else if (peer_addr.ss_family == AF_INET6) {
-                        ((struct sockaddr_in6*)&peer_addr)->sin6_port = htons(((struct sockaddr_in6*)&peer_addr)->sin6_port);
-                    }
-
-                    if (send_socket == INVALID_SOCKET) {
+                if (send_socket == INVALID_SOCKET) {
+                    sock_ret = -1;
+                    sock_err = -1;
+                }
+                else
+                {
+                    if (param->simulate_eio && send_length > PICOQUIC_MAX_PACKET_SIZE) {
+                        /* Test hook, simulating a driver that does not support GSO */
                         sock_ret = -1;
-                        sock_err = -1;
+                        sock_err = EIO;
+                        param->simulate_eio = 0;
                     }
-                    else
-                    {
-                        if (param->simulate_eio && send_length > PICOQUIC_MAX_PACKET_SIZE) {
-                            /* Test hook, simulating a driver that does not support GSO */
-                            sock_ret = -1;
-                            sock_err = EIO;
-                            param->simulate_eio = 0;
-                        }
-                        else {
+                    else {
+                        sock_ret = picoquic_sendmsg(send_socket,
+                            (struct sockaddr*)&peer_addr, (struct sockaddr*)&local_addr, 0,
+                            (const char*)send_buffer, (int)send_length, (int)send_msg_size, &sock_err);
+                    }
+                }
+                if (sock_ret <= 0) {
+                    /* TODO: add a test in which the socket fails. */
+                    // CLEAN MC: Refactor logging without using stdout
+                    fprintf(stdout, "Could not send message to AF_to=%d, AF_from=%d, ret=%d, err=%d\n",
+                        peer_addr.ss_family, local_addr.ss_family, sock_ret, sock_err);
+
+                    if (sock_err == EIO) {
+                        /* TODO: this is an error encountered if the system supports GSO, but
+                            * the specific interface driver does not. Main example is Mininet.
+                            * Not sure that we can treat that correctly. Try to minimize the
+                            * amount of untested code? Rely on config flag? Rely on error
+                            * recovery? */
+                        size_t packet_index = 0;
+                        size_t packet_size = send_msg_size;
+
+                        while (packet_index < send_length) {
+                            if (packet_index + packet_size > send_length) {
+                                packet_size = send_length - packet_index;
+                            }
                             sock_ret = picoquic_sendmsg(send_socket,
                                 (struct sockaddr*)&peer_addr, (struct sockaddr*)&local_addr, 0,
-                                (const char*)send_buffer, (int)send_length, (int)send_msg_size, &sock_err);
-                        }
-                    }
-                    if (sock_ret <= 0) {
-                        /* TODO: add a test in which the socket fails. */
-                        // CLEAN MC: Refactor logging without using stdout
-                        fprintf(stdout, "Could not send message to AF_to=%d, AF_from=%d, ret=%d, err=%d\n",
-                            peer_addr.ss_family, local_addr.ss_family, sock_ret, sock_err);
-
-                        if (sock_err == EIO) {
-                            /* TODO: this is an error encountered if the system supports GSO, but
-                                * the specific interface driver does not. Main example is Mininet.
-                                * Not sure that we can treat that correctly. Try to minimize the
-                                * amount of untested code? Rely on config flag? Rely on error
-                                * recovery? */
-                            size_t packet_index = 0;
-                            size_t packet_size = send_msg_size;
-
-                            while (packet_index < send_length) {
-                                if (packet_index + packet_size > send_length) {
-                                    packet_size = send_length - packet_index;
-                                }
-                                sock_ret = picoquic_sendmsg(send_socket,
-                                    (struct sockaddr*)&peer_addr, (struct sockaddr*)&local_addr, 0,
-                                    (const char*)(send_buffer + packet_index), (int)packet_size, 0, &sock_err);
-                                if (sock_ret > 0) {
-                                    packet_index += packet_size;
-                                }
-                                else {
-                                    fprintf(stdout, "Retry with packet size=%zu fails at index %zu, ret=%d, err=%d.\n",
-                                        packet_size, packet_index, sock_ret, sock_err);
-                                    break;
-                                }
-                            }
+                                (const char*)(send_buffer + packet_index), (int)packet_size, 0, &sock_err);
                             if (sock_ret > 0) {
-                                fprintf(stdout, "Retry of %zu bytes by chunks of %zu bytes succeeds.\n",
-                                    send_length, send_msg_size);
+                                packet_index += packet_size;
                             }
-                            if (send_msg_ptr != NULL) {
-                                /* Make sure that we do not use GSO anymore in this run */
-                                send_msg_ptr = NULL;
-                                fprintf(stdout, "%s", "UDP GSO was disabled\n");
+                            else {
+                                fprintf(stdout, "Retry with packet size=%zu fails at index %zu, ret=%d, err=%d.\n",
+                                    packet_size, packet_index, sock_ret, sock_err);
+                                break;
                             }
+                        }
+                        if (sock_ret > 0) {
+                            fprintf(stdout, "Retry of %zu bytes by chunks of %zu bytes succeeds.\n",
+                                send_length, send_msg_size);
+                        }
+                        if (send_msg_ptr != NULL) {
+                            /* Make sure that we do not use GSO anymore in this run */
+                            send_msg_ptr = NULL;
+                            fprintf(stdout, "%s", "UDP GSO was disabled\n");
                         }
                     }
                 }
             }
-
-            // Rate limiting
-            timespec_get(&current_time, TIME_UTC);
-            double elapsed_seconds = (current_time.tv_sec - start_time_sec.tv_sec) +
-                                    ((current_time.tv_nsec - start_time_sec.tv_nsec) / 1e9);
-
-            double elapsed_milliseconds = ((current_time.tv_sec - start_time_millisec.tv_sec) +
-                                    (current_time.tv_nsec - start_time_millisec.tv_nsec) / 1e9) * 1000;
-
-            if (elapsed_milliseconds >= 1.0) {
-                bytes_sent_per_millisec = 0; 
-                timespec_get(&start_time_millisec, TIME_UTC);
-            }
-
-            if (elapsed_seconds >= 1.0) {
-                printf("Total sent: %ld bytes = %lf kibit in 1 second, max = %d kibit per second\n", bytes_sent_per_second, ((double)bytes_sent_per_second / 128), (int)mc_channel->max_rate);
-                bytes_sent_per_second = 0; 
-                timespec_get(&start_time_sec, TIME_UTC);
-            }
         }
 
-        // After each 10 packets, run callback
+        // Rate limiting
+        timespec_get(&current_time, TIME_UTC);
+        double elapsed_seconds = (current_time.tv_sec - start_time_sec.tv_sec) +
+                                ((current_time.tv_nsec - start_time_sec.tv_nsec) / 1e9);
+
+        double elapsed_milliseconds = ((current_time.tv_sec - start_time_millisec.tv_sec) +
+                                (current_time.tv_nsec - start_time_millisec.tv_nsec) / 1e9) * 1000;
+
+        if (elapsed_milliseconds >= 1.0) {
+            bytes_sent_per_millisec = 0; 
+            timespec_get(&start_time_millisec, TIME_UTC);
+        }
+
+        if (elapsed_seconds >= 1.0) {
+            printf("Total sent: %ld bytes = %lf kibit in 1 second, max = %d kibit per second\n", bytes_sent_per_second, ((double)bytes_sent_per_second / 128), (int)mc_channel->max_rate);
+            bytes_sent_per_second = 0; 
+            timespec_get(&start_time_sec, TIME_UTC);
+        }
+
         if (ret == 0) {
             if (loop_callback != NULL) {
                 ret = loop_callback(quic, picoquic_packet_loop_after_send, loop_callback_ctx, &bytes_sent);
@@ -1016,11 +1027,11 @@ void* picoquic_packet_loop_v3(void* v_ctx)
     int ret = 0;
     uint64_t current_time = picoquic_get_quic_time(quic);
     int64_t delay_max = 10000000;
-    struct sockaddr_storage addr_from;
-    struct sockaddr_storage addr_to;
-    int if_index_to;
+    struct sockaddr_storage addr_from[2];
+    struct sockaddr_storage addr_to[2];
+    int if_index_to[2];
 #ifndef _WINDOWS
-    uint8_t buffer[1536];
+    uint8_t buffer[3072];
 #endif
     uint8_t* send_buffer = NULL;
     size_t send_length = 0;
@@ -1098,12 +1109,14 @@ void* picoquic_packet_loop_v3(void* v_ctx)
     while (ret == 0 && !thread_ctx->thread_should_close) {
         int socket_rank = -1;
         int64_t delta_t = 0;
-        uint8_t received_ecn;
+        uint8_t received_ecn[2];
         uint8_t* received_buffer;
         uint64_t previous_time;
         uint64_t mc_integrity_packet_threshold = 5;
+        int multicast_offset_from = -1;
 
-        if_index_to = 0;
+        if_index_to[0] = 0;
+        if_index_to[1] = 0;
         /* The "loop immediate" condition is set when a packet has been
         * received and processed successfully. We call select again with
         * a delay set to zero to check whether more packets need to be
@@ -1145,10 +1158,9 @@ void* picoquic_packet_loop_v3(void* v_ctx)
             delta_t, &is_wake_up_event, thread_ctx, &socket_rank);
 #else
         bytes_recv = picoquic_packet_loop_select(s_ctx, nb_sockets_available,
-            &addr_from,
-            &addr_to, &if_index_to, &received_ecn,
-            buffer, sizeof(buffer),
-            delta_t, &is_wake_up_event, thread_ctx, &socket_rank, quic->mc_channels, quic->nb_mc_channels);
+            addr_from, addr_to, if_index_to, received_ecn,
+            buffer, sizeof(buffer), delta_t, &is_wake_up_event, thread_ctx, &socket_rank, 
+            quic->mc_channels, quic->nb_mc_channels, &multicast_offset_from);
         received_buffer = buffer;
 #endif
         current_time = picoquic_current_time();
@@ -1194,9 +1206,9 @@ void* picoquic_packet_loop_v3(void* v_ctx)
 #else
                 /* Submit the packet to the server */
                 ret = picoquic_incoming_packet_ex(quic, received_buffer,
-                    (size_t)bytes_recv, (struct sockaddr*)&addr_from,
-                    (struct sockaddr*)&addr_to, if_index_to, received_ecn,
-                    &last_cnx, current_time);
+                    (size_t)bytes_recv, (struct sockaddr*)addr_from,
+                    (struct sockaddr*)addr_to, if_index_to, multicast_offset_from,
+                    received_ecn, &last_cnx, current_time);
 #endif
 
 

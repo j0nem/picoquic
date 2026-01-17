@@ -7478,15 +7478,6 @@ uint8_t* picoquic_format_mc_state_frame(uint8_t* bytes, uint8_t* bytes_max, pico
         bytes = picoquic_frames_varint_encode(bytes, bytes_max, 0); // Reason phrase currently always empty
     }
 
-    if (ch_in_cnx->cnx->callback_fn != NULL) {
-        if (state == picoquic_mc_state_frame_left) {
-            ch_in_cnx->cnx->callback_fn(ch_in_cnx->cnx, 0, NULL, 0, picoquic_callback_multicast_left, ch_in_cnx->cnx->callback_ctx, &ch_in_cnx->channel->channel_id);
-        }
-        if (state == picoquic_mc_state_frame_retired) {
-            ch_in_cnx->cnx->callback_fn(ch_in_cnx->cnx, 0, NULL, 0, picoquic_callback_multicast_retired, ch_in_cnx->cnx->callback_ctx, &ch_in_cnx->channel->channel_id);
-        }
-    }
-
     // CLEAN MC: Refactor event/error logging to qlog
     fprintf(stdout, "Send MC_STATE frame with MCQUIC state 0x%i ", state);
     switch (state) {
@@ -7689,6 +7680,7 @@ int picoquic_process_ack_of_mc_state_frame(picoquic_cnx_t* cnx, const uint8_t* b
     uint8_t id_len;
     picoquic_multicast_channel_id_t channel_id;
     uint64_t seq_number;
+    uint8_t state;
 
     if ((bytes = picoquic_frames_uint8_decode(bytes, bytes_max, &id_len)) == NULL) {
         return -1;
@@ -7701,9 +7693,11 @@ int picoquic_process_ack_of_mc_state_frame(picoquic_cnx_t* cnx, const uint8_t* b
     }
 
     bytes += bytes_copied;
-    bytes = picoquic_frames_varint_decode(bytes, bytes_max, &seq_number);
-    
-    if (bytes == NULL) {
+    if ((bytes = picoquic_frames_varint_decode(bytes, bytes_max, &seq_number)) == NULL ) {
+        return -1;
+    }
+
+    if ((bytes = picoquic_frames_uint8_decode(bytes, bytes_max, &state)) == NULL) {
         return -1;
     }
 
@@ -7713,17 +7707,26 @@ int picoquic_process_ack_of_mc_state_frame(picoquic_cnx_t* cnx, const uint8_t* b
     if (bytes_next == NULL) {
         return -1;
     }
-    else {
-        picoquic_mc_channel_in_cnx_t* ch_in_cnx = picoquic_find_multicast_channel_in_cnx(&channel_id, cnx);
-        if (ch_in_cnx == NULL) {
-            return -1;
+
+    picoquic_mc_channel_in_cnx_t* ch_in_cnx = picoquic_find_multicast_channel_in_cnx(&channel_id, cnx);
+    if (ch_in_cnx == NULL) {
+        return -1;
+    }
+    ch_in_cnx->mc_state_acked = 1;
+    ch_in_cnx->latest_state_sequence_acked = seq_number;
+    *consumed = bytes_next - bytes_first;
+
+    fprintf(stdout, "ACK of MC_STATE successfully processed\n");
+
+    if (ch_in_cnx->cnx->callback_fn != NULL) {
+        if (state == picoquic_mc_state_frame_left) {
+            ch_in_cnx->cnx->callback_fn(ch_in_cnx->cnx, 0, NULL, 0, picoquic_callback_multicast_left, ch_in_cnx->cnx->callback_ctx, &ch_in_cnx->channel->channel_id);
         }
-        ch_in_cnx->mc_state_acked = 1;
-        ch_in_cnx->latest_state_sequence_acked = seq_number;
-        *consumed = bytes_next - bytes_first;
+        if (state == picoquic_mc_state_frame_retired) {
+            ch_in_cnx->cnx->callback_fn(ch_in_cnx->cnx, 0, NULL, 0, picoquic_callback_multicast_retired, ch_in_cnx->cnx->callback_ctx, &ch_in_cnx->channel->channel_id);
+        }
     }
     
-    fprintf(stdout, "ACK of MC_STATE successfully processed\n");
     return ret;
 }
 
@@ -7762,6 +7765,7 @@ int picoquic_check_mc_state_needs_repeat(picoquic_cnx_t* cnx, const uint8_t* byt
 
     if (*no_need_to_repeat == 0) {
         fprintf(stdout, "MC_STATE needs repeat\n");
+        // ENHANCE MC: If no ACK for MC_STATE(Left) or MC_STATE(Retired) arrives after x retries or defined timeout, just stop retransmissions
     } else {
         fprintf(stdout, "MC_STATE do not need repeat\n");
     }
@@ -8055,6 +8059,7 @@ const uint8_t* picoquic_decode_mc_integrity_frame(picoquic_cnx_t* cnx, const uin
             if (integrity->packet_number == packet->pn && packet->bytes != NULL && packet->length != 0) {
                 if (memcmp(packet->hash, integrity->hash, hash_length) != 0) {
                     fprintf(stdout, "Hash of packet number %lu could NOT be verified\n", packet->pn);
+                    integrity = ((picoquic_multicast_packet_integrity_t*)integrity->next);
                     continue;
                 } 
 
@@ -8234,7 +8239,6 @@ int picoquic_process_ack_of_mc_integrity_frame(picoquic_cnx_t* cnx, const uint8_
 
     *consumed = bytes_next - bytes_first;
 
-    fprintf(stdout, "ACK of MC_INTEGRITY sucessfully processed\n");
     // TODO MC: Cleanup: Remove integrity hash from list of hashes when all clients ACKed the MC_INTEGRITY frame?
 
     return 0;
@@ -8297,12 +8301,6 @@ int picoquic_check_mc_integrity_needs_repeat(picoquic_cnx_t* cnx, const uint8_t*
                 }
             }
         }
-    }
-
-    if (*no_need_to_repeat == 0) {
-        fprintf(stdout, "MC_INTEGRITY needs repeat\n");
-    } else {
-        fprintf(stdout, "MC_INTEGRITY do not need repeat\n");
     }
 
     return ret;
@@ -9215,6 +9213,7 @@ int picoquic_decode_frames_multicast(picoquic_mc_channel_in_cnx_t* ch_in_cnx, co
             if (integrity->packet_number == pn64) {
                 if (memcmp(packet->hash, integrity->hash, hash_length) != 0) {
                     fprintf(stdout, "Hash of packet number %lu could NOT be verified\n", pn64);
+                    integrity = ((picoquic_multicast_packet_integrity_t*)integrity->next);
                     continue;
                 }
 

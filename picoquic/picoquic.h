@@ -1240,10 +1240,11 @@ int picoquic_incoming_packet_ex(
     picoquic_quic_t* quic,
     uint8_t* bytes,
     size_t packet_length,
-    struct sockaddr* addr_from,
-    struct sockaddr* addr_to,
-    int if_index_to,
-    unsigned char received_ecn,
+    struct sockaddr addr_from[2],
+    struct sockaddr addr_to[2],
+    int if_index_to[2],
+    int multicast_offset_from,
+    unsigned char received_ecn[2],
     picoquic_cnx_t** first_cnx,
     uint64_t current_time);
 

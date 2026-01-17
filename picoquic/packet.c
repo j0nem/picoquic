@@ -3098,10 +3098,11 @@ int picoquic_incoming_packet_ex(
     picoquic_quic_t* quic,
     uint8_t* bytes,
     size_t packet_length,
-    struct sockaddr* addr_from,
-    struct sockaddr* addr_to,
-    int if_index_to,
-    unsigned char received_ecn,
+    struct sockaddr addr_from[2],
+    struct sockaddr addr_to[2],
+    int if_index_to[2],
+    int multicast_length_first,
+    unsigned char received_ecn[2],
     picoquic_cnx_t** first_cnx,
     uint64_t current_time)
 {
@@ -3109,13 +3110,24 @@ int picoquic_incoming_packet_ex(
     int ret = 0;
     picoquic_connection_id_t previous_destid = picoquic_null_connection_id;
 
+    int packet_length_current = packet_length;
+    if (multicast_length_first > 0) {
+        packet_length_current = multicast_length_first;
+    }
+
     while (consumed_index < packet_length) {
         size_t consumed = 0;
+        int index = 0;
+
+        if (consumed_index > 0 && consumed_index == multicast_length_first) {
+            index = 1;
+            packet_length_current = packet_length - multicast_length_first;
+        }
 
         ret = picoquic_incoming_segment(quic, bytes + consumed_index, 
-            packet_length - consumed_index, packet_length,
-            &consumed, addr_from, addr_to, if_index_to, received_ecn, current_time, current_time,
-            &previous_destid, first_cnx);
+                packet_length_current - consumed_index, packet_length_current,
+                &consumed, &addr_from[index], &addr_to[index], if_index_to[index], received_ecn[index], current_time, current_time,
+                &previous_destid, first_cnx);
 
         if (ret == 0) {
             consumed_index += consumed;
@@ -3148,8 +3160,18 @@ int picoquic_incoming_packet(
 {
     picoquic_cnx_t* first_cnx = NULL;
 
-    int ret = picoquic_incoming_packet_ex(quic, bytes, packet_length, addr_from, addr_to,
-        if_index_to, received_ecn, &first_cnx, current_time);
+    struct sockaddr addr_from_new[2];
+    struct sockaddr addr_to_new[2];
+    int if_index_to_new[2];
+    unsigned char received_ecn_new[2];
+
+    memcpy(addr_from_new, addr_from, sizeof(struct sockaddr));
+    memcpy(addr_to_new, addr_to, sizeof(struct sockaddr));
+    memcpy(if_index_to_new, &if_index_to, sizeof(int));
+    memcpy(received_ecn_new, &received_ecn, sizeof(unsigned char));
+
+    int ret = picoquic_incoming_packet_ex(quic, bytes, packet_length, addr_from_new, addr_to_new,
+        if_index_to_new, -1, received_ecn_new, &first_cnx, current_time);
     return ret;
 }
 
