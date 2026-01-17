@@ -102,7 +102,7 @@ void multicast_server_process_client_left_or_retired(multicast_server_cnx_ctx_t*
     
     // Stop multicast sender if all clients are already left
     if (server_ctx != NULL && server_ctx->nb_joined_clients == 0 && server_ctx->mc_channel->is_retired) {
-        server_ctx->is_closing = 1;
+        server_ctx->is_closing_sender = 1;
     }
 }
 
@@ -244,7 +244,7 @@ static int multicast_server_loop_cb(picoquic_quic_t* quic, picoquic_packet_loop_
         case picoquic_packet_loop_port_update:
             break;
         case picoquic_packet_loop_after_send:
-            if (server_ctx->is_closing) {
+            if (server_ctx->is_closing_server) {
                 ret = PICOQUIC_NO_ERROR_TERMINATE_PACKET_LOOP;
             }
             break;

@@ -226,6 +226,37 @@ int multicast_sender_callback(picoquic_multicast_channel_t* channel,
     return ret;
 }
 
+static int multicast_sender_loop_cb(picoquic_quic_t* quic, picoquic_packet_loop_cb_enum cb_mode, 
+    void* callback_ctx, void * callback_arg)
+{
+    int ret = 0;
+    multicast_server_ctx_t* server_ctx = (multicast_server_ctx_t*)callback_ctx;
+
+    if (server_ctx == NULL) {
+        ret = PICOQUIC_ERROR_UNEXPECTED_ERROR;
+    }
+    else {
+        switch (cb_mode) {
+        case picoquic_packet_loop_ready:
+        case picoquic_packet_loop_wake_up:
+        case picoquic_packet_loop_after_receive:
+        case picoquic_packet_loop_port_update:
+            break;
+        case picoquic_packet_loop_after_send:
+            if (server_ctx->is_closing_sender) {
+                server_ctx->is_closing_server = 1;
+                ret = PICOQUIC_NO_ERROR_TERMINATE_PACKET_LOOP;
+            }
+            break;
+        default:
+            ret = PICOQUIC_ERROR_UNEXPECTED_ERROR;
+            break;
+        }
+    }
+    return ret;
+}
+
+
 /* Prepare the context used by the multicast sender client and set callback */
 static int multicast_sender_init(multicast_sender_ctx_t *sender_ctx,
     picoquic_multicast_channel_t* channel)
@@ -264,7 +295,7 @@ int multicast_sender_start(multicast_sender_ctx_t* sender_ctx, int* thread_ret, 
         picoquic_internal_thread_create, picoquic_internal_thread_delete,
         picoquic_internal_thread_setname, "multicast_sender", 
         picoquic_packet_loop_multicast_send,
-        NULL, NULL, thread_ret);
+        multicast_sender_loop_cb, sender_ctx->server_ctx, thread_ret);
 
     ret = multicast_sender_mark_datagram_ready(sender_ctx);
 
