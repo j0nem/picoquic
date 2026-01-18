@@ -12,13 +12,13 @@ Usage
 Usage:
 
 ```bash
-../dgramspl client server_name port folder *queried_file
+../dgramspl client server_name port folder
 ```
 
 or :  
 
 ```bash
-../dgramspl server port cert_file private_key_file folder
+../dgramspl server port cert_file private_key_file file_path
 ```
 
 Example

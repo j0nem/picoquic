@@ -8021,7 +8021,7 @@ const uint8_t* picoquic_decode_mc_integrity_frame(picoquic_cnx_t* cnx, const uin
 
     // If no new hashes in frame, skip
     if (nb_hashes == nb_already_received) {
-        return picoquic_skip_mc_integrity_frame(cnx, bytes0, bytes_max, ftype);
+        return picoquic_skip_mc_integrity_frame_assumed_hashlength(bytes0, bytes_max, ftype, 48);
     }
 
     for (uint64_t number = pkt_nb_start; number <= pkt_nb_end; number++) {

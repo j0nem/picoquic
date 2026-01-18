@@ -1243,6 +1243,7 @@ int picoquic_incoming_packet_ex(
     struct sockaddr addr_from[2],
     struct sockaddr addr_to[2],
     int if_index_to[2],
+    int is_multicast[2],
     int multicast_offset_from,
     unsigned char received_ecn[2],
     picoquic_cnx_t** first_cnx,
