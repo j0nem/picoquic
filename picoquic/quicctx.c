@@ -5187,6 +5187,8 @@ int picoquic_reset_cnx(picoquic_cnx_t* cnx, uint64_t current_time)
 
 int picoquic_connection_error_ex(picoquic_cnx_t* cnx, uint64_t local_error, uint64_t frame_type, char const * local_reason)
 {
+    fprintf(stdout, "Error: %lu, closing\n", local_error);
+
     if (local_error > PICOQUIC_ERROR_CLASS) {
         local_error = PICOQUIC_TRANSPORT_INTERNAL_ERROR;
     }
@@ -5390,6 +5392,7 @@ void picoquic_delete_cnx(picoquic_cnx_t* cnx)
 
         if (cnx->cnx_state < picoquic_state_disconnected) {
             /* Give the application a chance to clean up its state */
+            fprintf(stdout, "Delete cnx, disconnect before\n");
             picoquic_connection_disconnect(cnx);
         }
 
