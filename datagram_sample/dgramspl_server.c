@@ -356,7 +356,7 @@ int dgramspl_server(int server_port, const char* server_cert, const char* server
      * still, get the faulty driver fixed.
      */
     if (ret == 0) {
-        ret = picoquic_packet_loop(quic, server_port, 0, 0, 0, 0, NULL, NULL);
+        ret = picoquic_packet_loop(quic, server_port, 0, 0, 0, 1, NULL, NULL);
     }
 
     /* And finish. */
