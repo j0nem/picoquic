@@ -4452,6 +4452,7 @@ const uint8_t* picoquic_decode_connection_close_frame(picoquic_cnx_t* cnx, const
 
         if (cnx->is_multicast_enabled == 1) {
             picoquic_multicast_handle_cnx_close(cnx);
+            fprintf(stdout, "Got CONNECTION_CLOSE frame, stop multicast processes\n");
         }
         if (cnx->callback_fn != NULL && cnx->cnx_state != old_state && cnx->cnx_state == picoquic_state_disconnected) {
             (void)(cnx->callback_fn)(cnx, 0, NULL, 0, picoquic_callback_close, cnx->callback_ctx, NULL);
