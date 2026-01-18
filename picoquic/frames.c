@@ -9696,6 +9696,7 @@ int picoquic_decode_frames(picoquic_cnx_t* cnx, picoquic_path_t * path_x, const 
                             break;
                         default:
                             /* Not implemented yet! */
+                            fprintf(stdout, "Error: Received unknown frame type: %lu\n", frame_id64);
                             picoquic_connection_error(cnx, PICOQUIC_TRANSPORT_FRAME_FORMAT_ERROR, frame_id64);
                             bytes = NULL;
                             break;
