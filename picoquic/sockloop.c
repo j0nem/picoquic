@@ -929,6 +929,7 @@ void* picoquic_packet_loop_multicast_send(void* v_ctx)
                         peer_addr.ss_family, local_addr.ss_family, sock_ret, sock_err);
 
                     if (sock_err == EIO) {
+                        fprintf(stdout, "GSO error happened\n");
                         /* TODO: this is an error encountered if the system supports GSO, but
                             * the specific interface driver does not. Main example is Mininet.
                             * Not sure that we can treat that correctly. Try to minimize the
