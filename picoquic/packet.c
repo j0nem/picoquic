@@ -2779,7 +2779,7 @@ int picoquic_incoming_segment(
 
         for (int i = 0; i < quic->nb_mc_channels; i++) {
             if (quic->mc_channels[i]->local_if == if_index_to && quic->mc_channels[i]->local_port == port &&
-                is_multicast == 1 && quic->mc_channels[i]->client_mode
+                quic->mc_channels[i]->client_mode
             ) {
                 mc_ch_in_cnx = quic->mc_channels[i]->used_in_cnx[0];
             }
