@@ -876,8 +876,8 @@ void* picoquic_packet_loop_multicast_send(void* v_ctx)
                 &peer_addr, &local_addr, mc_channel,
                 send_msg_ptr);
 
-            if (send_length > remaining_capacity) {
-                fprintf(stdout, "Warning! send_length > remaining_capacity\n");
+            if ((int64_t)send_length > remaining_capacity) {
+                fprintf(stdout, "Warning! send_length (%lu) > remaining_capacity (%ld)\n", send_length, remaining_capacity);
             }
         
             if (ret == 0 && send_length > 0) {
