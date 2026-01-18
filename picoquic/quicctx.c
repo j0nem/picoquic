@@ -5187,7 +5187,7 @@ int picoquic_reset_cnx(picoquic_cnx_t* cnx, uint64_t current_time)
 
 int picoquic_connection_error_ex(picoquic_cnx_t* cnx, uint64_t local_error, uint64_t frame_type, char const * local_reason)
 {
-    fprintf(stdout, "Error: %lu, closing\n", local_error);
+    fprintf(stdout, "Error: %lu, frame type: %lu closing\n", local_error, frame_type);
 
     if (local_error > PICOQUIC_ERROR_CLASS) {
         local_error = PICOQUIC_TRANSPORT_INTERNAL_ERROR;
