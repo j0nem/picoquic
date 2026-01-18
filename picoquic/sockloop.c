@@ -866,13 +866,20 @@ void* picoquic_packet_loop_multicast_send(void* v_ctx)
         int sock_ret = 0;
         int sock_err = 0;
 
+        size_t send_buffer_size_loop = send_buffer_size;
+
         int64_t remaining_capacity = (int64_t)max_bytes_per_millisec - (int64_t)bytes_sent_per_millisec;
         if (remaining_capacity >= PICOQUIC_MAX_PACKET_SIZE) {
             // TODO MC: Make sure that packets are only prepared with max. remaining_capacity bytes
             // and change condition above. Currently, max_rate has to be min. 12000 kibits, 
             // because with that rate exactly one packet with 1536 byte fits into one milliscond.
+
+            if (send_buffer_size_loop > remaining_capacity) {
+                send_buffer_size_loop = (size_t)remaining_capacity;
+            }
+
             ret = picoquic_prepare_next_packet_multicast(quic,
-                send_buffer, send_buffer_size, &send_length,
+                send_buffer, send_buffer_size_loop, &send_length,
                 &peer_addr, &local_addr, mc_channel,
                 send_msg_ptr);
 
