@@ -313,10 +313,10 @@ int multicast_server(int server_port, int sender_port, const char *server_cert, 
     {
         picoquic_set_cookie_mode(quic, 2);
         picoquic_set_default_congestion_algorithm(quic, picoquic_bbr_algorithm);
-        picoquic_set_qlog(quic, qlog_dir);
-        picoquic_set_log_level(quic, 1);
-        picoquic_enable_sslkeylog(quic, 1);
-        picoquic_set_key_log_file_from_env(quic);
+        // picoquic_set_qlog(quic, qlog_dir);
+        picoquic_set_log_level(quic, 0);
+        // picoquic_enable_sslkeylog(quic, 1);
+        // picoquic_set_key_log_file_from_env(quic);
         
         // Always accept enable multicast
         picoquic_set_default_multicast_option(quic, 1);
