@@ -85,7 +85,8 @@ typedef struct st_multicast_server_ctx_t
     const char *server_key;
     int sender_port;
     picoquic_quic_t* quic;
-    int is_closing;
+    int is_closing_sender;
+    int is_closing_server;
 } multicast_server_ctx_t;
 
 int multicast_client(char const *server_name, int server_port, 
