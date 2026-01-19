@@ -8020,7 +8020,7 @@ const uint8_t* picoquic_decode_mc_integrity_frame(picoquic_cnx_t* cnx, const uin
 
     // If no new hashes in frame, skip
     if (nb_hashes == nb_already_received) {
-        return picoquic_skip_mc_integrity_frame(cnx, bytes0, bytes_max, ftype);
+        return picoquic_skip_mc_integrity_frame_assumed_hashlength(bytes0, bytes_max, ftype, 48);
     }
 
     for (uint64_t number = pkt_nb_start; number <= pkt_nb_end; number++) {
@@ -8166,8 +8166,7 @@ int picoquic_process_ack_of_mc_integrity_frame(picoquic_cnx_t* cnx, const uint8_
     uint8_t id_len;
     picoquic_multicast_channel_id_t channel_id;
     uint64_t packet_number_start;
-    uint64_t length_hashes;
-    int nb_hashes;
+    uint64_t nb_hashes;
 
     if ((bytes = picoquic_frames_uint8_decode(bytes, bytes_max, &id_len)) == NULL) {
         return -1;
@@ -8192,12 +8191,10 @@ int picoquic_process_ack_of_mc_integrity_frame(picoquic_cnx_t* cnx, const uint8_
     size_t hash_len = picoquic_hash_get_length(ch_in_cnx->channel->hash_algorithm_name);
 
     if (ftype == picoquic_frame_type_mc_integrity_l) {
-        picoquic_frames_varint_decode(bytes, bytes_max, &length_hashes);
+        picoquic_frames_varint_decode(bytes, bytes_max, &nb_hashes);
     } else {
-        length_hashes = bytes_max - bytes;
+        nb_hashes = (int)floor((bytes_max - bytes) / hash_len);
     }
-
-    nb_hashes = floor(length_hashes / hash_len);
 
     // Check if frame was already been acked
     int acked = 0;
@@ -8251,8 +8248,7 @@ int picoquic_check_mc_integrity_needs_repeat(picoquic_cnx_t* cnx, const uint8_t*
     uint8_t id_len;
     picoquic_multicast_channel_id_t channel_id;
     uint64_t packet_number_start;
-    uint64_t length_hashes;
-    int nb_hashes;
+    uint64_t nb_hashes;
     *no_need_to_repeat = 0;
 
     if ((bytes_parsing = picoquic_frames_uint8_decode(bytes_parsing, bytes_max, &id_len)) == NULL) {
@@ -8281,12 +8277,10 @@ int picoquic_check_mc_integrity_needs_repeat(picoquic_cnx_t* cnx, const uint8_t*
         size_t hash_len = picoquic_hash_get_length(ch_in_cnx->channel->hash_algorithm_name);
 
         if (ftype == picoquic_frame_type_mc_integrity_l) {
-            picoquic_frames_varint_decode(bytes, bytes_max, &length_hashes);
+            picoquic_frames_varint_decode(bytes, bytes_max, &nb_hashes);
         } else {
-            length_hashes = bytes_max - bytes;
+            nb_hashes = (int)floor((bytes_max - bytes) / hash_len);
         }
-
-        nb_hashes = floor(length_hashes / hash_len);
 
         if (ch_in_cnx->state >= picoquic_mc_state_left) {
             // If the client left the channel, do not repeat

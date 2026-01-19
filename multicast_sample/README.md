@@ -18,7 +18,7 @@ Usage:
 or :  
 
 ```bash
-../multicast server port_server port_sender cert_file private_key_file max_rate served_file_name [client_threshold] [is_local]
+../multicast server port_server port_sender cert_file private_key_file max_rate served_file_name [client_threshold] [is_local] [activate_logging]
 ```
 
 The `max_rate` parameter (int) is the maximum rate in kibps according to the QUIC multicast draft specification.
@@ -26,7 +26,9 @@ The `max_rate` parameter (int) is the maximum rate in kibps according to the QUI
 The `client_threshold` parameter (int) specifies the number of clients needing to join the channel before the multicast sending process is started. 
 
 The `is_local` parameter (string) can be set optionally (has to match the string `local` exactly) when all servers are running on localhost.
-This forces the sender to use the "from IP" `127.0.0.1`.
+This forces the sender to use the "from IP" `127.0.0.1` and deactivates GSO.
+
+The `activate_logging` parameter (string) can be set optinally (has to match the string `log` exactly). This logs all packets in binary log and qlog format in `./log` and activates sslkeylog. Otherwise, only the first 100 packets are logged on the server.
 
 Example
 -------

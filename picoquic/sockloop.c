@@ -578,6 +578,7 @@ int picoquic_packet_loop_select(picoquic_socket_ctx_t* s_ctx,
     struct sockaddr_storage addr_from[],
     struct sockaddr_storage addr_dest[],
     int dest_if[],
+    int is_multicast[],
     unsigned char received_ecn[],
     uint8_t* buffer, int buffer_max,
     int64_t delta_t,
@@ -690,6 +691,7 @@ int picoquic_packet_loop_select(picoquic_socket_ctx_t* s_ctx,
                         else if (addr_dest[0].ss_family == AF_INET) {
                             ((struct sockaddr_in*)(&addr_dest[0]))->sin_port = s_ctx[i].n_port;
                         }
+                        is_multicast[0] = 0;
                         break;
                     }
                 }
@@ -730,6 +732,7 @@ int picoquic_packet_loop_select(picoquic_socket_ctx_t* s_ctx,
                             mc_channels[i]->local_port = ((struct sockaddr_in*)&addr_dest[index])->sin_port;
                         }
                         mc_channels[i]->local_if = dest_if[index];
+                        is_multicast[index] = 1;
                         break;
                     }
                 }
@@ -863,15 +866,26 @@ void* picoquic_packet_loop_multicast_send(void* v_ctx)
         int sock_ret = 0;
         int sock_err = 0;
 
-        int remaining_capacity = (int)(max_bytes_per_millisec - bytes_sent_per_millisec);
+        size_t send_buffer_size_loop = send_buffer_size;
+
+        int64_t remaining_capacity = (int64_t)max_bytes_per_millisec - (int64_t)bytes_sent_per_millisec;
         if (remaining_capacity >= PICOQUIC_MAX_PACKET_SIZE) {
             // TODO MC: Make sure that packets are only prepared with max. remaining_capacity bytes
             // and change condition above. Currently, max_rate has to be min. 12000 kibits, 
             // because with that rate exactly one packet with 1536 byte fits into one milliscond.
+
+            if (send_buffer_size_loop > remaining_capacity) {
+                send_buffer_size_loop = (size_t)remaining_capacity;
+            }
+
             ret = picoquic_prepare_next_packet_multicast(quic,
-                send_buffer, send_buffer_size, &send_length,
+                send_buffer, send_buffer_size_loop, &send_length,
                 &peer_addr, &local_addr, mc_channel,
                 send_msg_ptr);
+
+            if ((int64_t)send_length > remaining_capacity) {
+                fprintf(stdout, "Warning! send_length (%lu) > remaining_capacity (%ld)\n", send_length, remaining_capacity);
+            }
         
             if (ret == 0 && send_length > 0) {
                 /* If send_msg_size is defined, sendmsg may send more than one packet.
@@ -1030,6 +1044,7 @@ void* picoquic_packet_loop_v3(void* v_ctx)
     struct sockaddr_storage addr_from[2];
     struct sockaddr_storage addr_to[2];
     int if_index_to[2];
+    int is_multicast[2];
 #ifndef _WINDOWS
     uint8_t buffer[3072];
 #endif
@@ -1158,7 +1173,7 @@ void* picoquic_packet_loop_v3(void* v_ctx)
             delta_t, &is_wake_up_event, thread_ctx, &socket_rank);
 #else
         bytes_recv = picoquic_packet_loop_select(s_ctx, nb_sockets_available,
-            addr_from, addr_to, if_index_to, received_ecn,
+            addr_from, addr_to, if_index_to, is_multicast, received_ecn,
             buffer, sizeof(buffer), delta_t, &is_wake_up_event, thread_ctx, &socket_rank, 
             quic->mc_channels, quic->nb_mc_channels, &multicast_offset_from);
         received_buffer = buffer;
@@ -1207,7 +1222,7 @@ void* picoquic_packet_loop_v3(void* v_ctx)
                 /* Submit the packet to the server */
                 ret = picoquic_incoming_packet_ex(quic, received_buffer,
                     (size_t)bytes_recv, (struct sockaddr*)addr_from,
-                    (struct sockaddr*)addr_to, if_index_to, multicast_offset_from,
+                    (struct sockaddr*)addr_to, if_index_to, is_multicast, multicast_offset_from,
                     received_ecn, &last_cnx, current_time);
 #endif
 
