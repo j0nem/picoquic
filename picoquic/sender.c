@@ -4724,7 +4724,6 @@ static int picoquic_check_idle_timer(picoquic_cnx_t* cnx, uint64_t* next_wake_ti
             cnx->local_error = PICOQUIC_ERROR_IDLE_TIMEOUT;
         }
         ret = PICOQUIC_ERROR_DISCONNECTED;
-        fprintf(stdout, "Disconnect due to timeout\n");
         picoquic_connection_disconnect(cnx);
     } else if (idle_timer < *next_wake_time) {
         *next_wake_time = idle_timer;

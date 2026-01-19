@@ -95,7 +95,7 @@ int multicast_client(char const *server_name, int server_port,
 int multicast_sender_start(multicast_sender_ctx_t* sender_ctx, int* thread_ret, picoquic_packet_loop_param_t* param);
 
 int multicast_server(int server_port, int sender_port, const char *server_cert, 
-    const char *server_key, int max_rate, const char *served_file, int client_threshold, int is_local);
+    const char *server_key, int max_rate, const char *served_file, int client_threshold, int is_local, int logging);
 
 #ifdef __cplusplus
 }

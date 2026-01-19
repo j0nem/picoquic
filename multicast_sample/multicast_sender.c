@@ -287,7 +287,7 @@ int multicast_sender_start(multicast_sender_ctx_t* sender_ctx, int* thread_ret, 
 
     if (server_ctx->is_local == 1) {
         param->force_localhost_src_ip = 1; /* Force localhost as src ip for multicast packets for local tests */
-        param->do_not_use_gso = 1; // CHECK MC: GSO deactivated currently due to issues with local interfaces, may be re-activated later?
+        param->do_not_use_gso = 1; // CHECK MC: GSO deactivated in local mode due to issues with local interfaces
     }
 
     /* Start the background thread. */
