@@ -157,7 +157,6 @@ int multicast_server_callback(picoquic_cnx_t *cnx,
         case picoquic_callback_stream_reset: /* Client reset stream #x */
         case picoquic_callback_stop_sending: /* Client asks server to reset stream #x */
         case picoquic_callback_stateless_reset:   /* Received an error message */
-            fprintf(stdout, "Received stateless reset from client\n");
         case picoquic_callback_close:             /* Received connection close */
         case picoquic_callback_application_close: /* Received application close */
             // Treat all of this as if the client would have sent STATE(LEFT) or STATE(RETIRED)
