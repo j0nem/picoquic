@@ -7935,12 +7935,12 @@ uint8_t* picoquic_format_mc_integrity_frame(uint8_t* bytes, uint8_t* bytes_max, 
     }
 
     // CLEAN MC: Refactor event/error logging to qlog    
-    fprintf(stdout, "Send MC_INTEGRITY for packet numbers %lu to %lu (= %lu hashes sent, space available for %i hashes, %lu waiting hashes)\n", 
-        first_hash_to_be_sent->packet_number, 
-        last_hash_to_be_sent->packet_number, 
-        nb_hashes_included,
-        (int)floor(bytes_available / hash_size), 
-        nb_hashes_to_be_sent_max);
+    // fprintf(stdout, "Send MC_INTEGRITY for packet numbers %lu to %lu (= %lu hashes sent, space available for %i hashes, %lu waiting hashes)\n", 
+    //     first_hash_to_be_sent->packet_number, 
+    //     last_hash_to_be_sent->packet_number, 
+    //     nb_hashes_included,
+    //     (int)floor(bytes_available / hash_size), 
+    //     nb_hashes_to_be_sent_max);
 
     return bytes;
 }
@@ -9676,7 +9676,7 @@ int picoquic_decode_frames(picoquic_cnx_t* cnx, picoquic_path_t * path_x, const 
                             break;
                         case picoquic_frame_type_mc_ack:
                         case picoquic_frame_type_mc_ack_ecn:
-                            fprintf(stdout, "Got MC_ACK frame\n");
+                            // fprintf(stdout, "Got MC_ACK frame\n");
                             bytes = picoquic_decode_mc_ack_frame(cnx, bytes, bytes_max, frame_id64);
                             break;
                         case picoquic_frame_type_mc_leave:
