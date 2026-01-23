@@ -189,6 +189,7 @@ int multicast_sender_callback(picoquic_multicast_channel_t* channel,
 
                     if (is_last == 1 && is_first != 1) {
                         fprintf(stdout, "is_last sent: First byte = 0x%x\n", buffer[0]);
+                        sender_ctx->server_ctx->is_closing_sender = 1;
                     } else if (is_last != 1 && is_first == 1) {
                         fprintf(stdout, "is_first sent: First byte = 0x%x\n", buffer[0]);
                     } else if (is_last == 1 && is_first == 1) {

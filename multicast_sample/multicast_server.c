@@ -334,6 +334,8 @@ int multicast_server(int server_port, int sender_port, const char *server_cert, 
         picoquic_store_text_addr(&group_ip, PICOQUIC_MULTICAST_GROUP_IP, PICOQUIC_MULTICAST_GROUP_PORT);
 
         picoquic_create_multicast_channel(quic, &global_ctx.mc_channel, PICOQUIC_MULTICAST_MAX_CLIENTS, &group_ip, NULL, max_rate);
+
+        int err = multicast_sender_start(&global_ctx.sender_app_ctx, global_ctx.sender_thread_ret, global_ctx.sender_loop_params);
     }
 
     /* Wait for packets using the wait loop provided in the library.
