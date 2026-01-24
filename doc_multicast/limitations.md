@@ -14,14 +14,13 @@ The following work-in-progress comments are used in the code to highlight releva
 - multicast acknowlegement:
     - `MC_ACK` decoding and handling + ack of MC_ACK management
     - `MC_ACK` handling - condiering `max_ack_gap` of `ACK_FREQUENCY`?
-- `MC_LIMITS` support
+- `MC_LIMITS` support (changing limits of client)
 - Connection migration / Multipath for unicast connections not tested yet
-- Congestion control
-- Flow control
+- Congestion control (leaving channels when limit is exeeded)
 - Multicast logging
 - Unit/Integrity tests
 
-## Optional things not implemented:
+## Additional features not implemented:
 
 - `MC_INTEGRITY` without length
 - `MC_STATE` for application (custom)
@@ -33,22 +32,20 @@ The following work-in-progress comments are used in the code to highlight releva
 
 ### Refine functionality:
 
-- Remove "seat on callback"? - currently, sender thread is started (and more) within callback
-- Leave/Retire
-    - Review Leave/Retire timeout
-    - Not always send both, Retire may be enough
+- Improve scalability and test with more clients
+- Review Leave/Retire timeout
 - Rate limiting/Flow control enhancements in multicast channels
-- Remove integrity hashes from context when not needed anymore
+- Cleanup integrity hashes from context when not needed anymore
 - Packet number encoding/decoding optimization
 - Caching of packets when key arrives late
 - Wake handling - active receiver condition
 - Implement multicast key rotation
 - Advanced limits check
 - Consider received multicast packets in idle time calculation
-- Datagram queueing for multicast
+- Support Datagram queueing API for multicast (currently, only just-in-time API is supported)
 - Maybe also send `MC_ACK` in retransmitted packets
-- Improve mcrx handling (do_receive callback)
-- Maybe add support for spin bit
+- Review mcrx handling (do_receive callback)
+- Review spin bit
 
 ### Handle more cases:
 
@@ -61,22 +58,10 @@ The following work-in-progress comments are used in the code to highlight releva
 - handling MC_LEAVE with wrong sequence number
 - Handle RESET_STREAM frames
 
-## Known Limitations:
-
-(support may not be necessary)
-
-- Channel cannot be joined in multiple connections
-- Source address currently not configurable
-- Channel id length not configurable
-- Supported algorithms/max delay not configurable
-- TIMESTAMP frame not supported (experimental draft)
-
 ## Application:
 
-- GSO active/not active?
-- Store data fragments in order
-- Better channelLeave management on client
-- Differentiation leave/retire
+- Data fragments should be orderd at application level
+- Better channel retire management on server
 
 ## Limitations of current specification:
 
