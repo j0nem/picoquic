@@ -83,3 +83,11 @@ data fragment {
 
 The picoquic API was extended to support some multicast features.  
 See [Multicast API](multicast-api.md) for the reference.
+
+## Performance evaluation
+
+The Picoquic multicast extension was developed and evaluated as part of a master thesis.
+
+[Results of the Evaluation](https://github.com/j0nem/multicast-performance-measures)
+
+[Evaluation setup and scripts](https://github.com/j0nem/multicast-performance)

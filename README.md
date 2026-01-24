@@ -1,6 +1,6 @@
-# picoquic Multicast
+# Multicast picoquic
 
-This repository contains an experimental multicast extension for `picoquic`.  
+✨ This repository contains an experimental multicast extension for `picoquic` based on [draft-jholland-quic-multicast-08](https://datatracker.ietf.org/doc/html/draft-jholland-quic-multicast-08).  
 
 ➡️ **[Go to the multicast extension documentation](doc_multicast/README.md)** ⬅️ for further details.
 
