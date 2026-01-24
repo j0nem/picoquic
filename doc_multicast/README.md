@@ -3,9 +3,21 @@
 This repository implements an experimental multicast extension for the picoquic QUIC implementation.  
 The implementation was written according to [draft-jholland-quic-multicast-08](https://datatracker.ietf.org/doc/html/draft-jholland-quic-multicast-08)
 
-## Current state and Limitations
+## Main features
 
-The implementation is experimental and currently incomplete. A rough overview of the missing parts can be found here:  
+- Multicast transport parameter support, negotiation for limits and supported algorithms
+- Full multicast join/leave/retire state management with all necessary `MC_*` control frames
+- IGMP/MLD Multicast Group join/leave via [`libmcrx`](https://github.com/GrumpyOldTroll/libmcrx)
+- Integration of separate unidirectional multicast sender packet loop with Flow Control (rate limiting)
+- Support for parallel reception of unicast and multicast traffic for clients via `select()` and `recvmsg()`
+- Symmetric encryption and decryption of multicast traffic, including header protection via [`picotls`](https://github.com/h2o/picotls)
+- Integrity hash generation for multicast frames, synchronization with unicast thread and transmission of `MC_INTEGRITY` frames to active clients via unicast
+- Integrity hash verification client-side, including support for early or late `MC_INTEGRITY` frames by multicast packet caching
+- Parital support for multicast acknowledgments via `MC_ACK`
+
+## Limitations
+
+The current implementation is experimental and some features are still missing. A rough overview of the limitations can be found here:  
 [Current limitations](limitations.md)
 
 ## Setup
